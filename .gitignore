@@ -19,7 +19,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# env files（所有密钥只在 Vercel 控制台配置，不进 Git）
+# env files（所有密钥只在 Netlify 控制台配置，不进 Git）
 .env
 .env*.local
 
