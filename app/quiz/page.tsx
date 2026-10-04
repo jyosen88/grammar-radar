@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSupabase, type GrammarCard } from "@/lib/supabase";
 import { Card } from "@/components/GrammarCardView";
+import { SiteNav } from "@/components/SiteNav";
 
 /** quiz_questions 表的一行 */
 interface QuizQuestion {
@@ -155,16 +155,12 @@ export default function QuizPage() {
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-8">
       <main className="mx-auto max-w-2xl space-y-5">
-        {/* 顶部：返回首页 */}
-        <div className="flex items-center justify-between">
-          <Link
-            href="/"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
-          >
-            ← 返回首页
-          </Link>
-          <h1 className="text-lg font-bold text-slate-900">名词选择题</h1>
-          <span className="w-20" />
+        {/* 顶部：导航 + 标题 */}
+        <div className="space-y-3">
+          <SiteNav />
+          <h1 className="text-center text-lg font-bold text-slate-900">
+            名词选择题
+          </h1>
         </div>
 
         {/* 加载 / 错误 / 空状态 */}

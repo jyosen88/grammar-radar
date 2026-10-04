@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { getSupabase, type GrammarCard } from "@/lib/supabase";
 import { Card } from "@/components/GrammarCardView";
+import { SiteNav } from "@/components/SiteNav";
 
 /** AI 分析返回的单个语法错误 */
 interface AnalysisError {
@@ -267,6 +268,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen">
+      <SiteNav />
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-8">
           <div>

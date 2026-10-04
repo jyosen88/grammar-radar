@@ -1,0 +1,36 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const ITEMS = [
+  { href: "/", label: "语法诊断" },
+  { href: "/quiz", label: "随机做题" },
+];
+
+/** 全站顶部导航栏，当前页高亮 */
+export function SiteNav() {
+  const pathname = usePathname();
+  return (
+    <nav className="border-b border-slate-200 bg-white">
+      <div className="mx-auto flex max-w-3xl items-center gap-1 px-4 py-2.5">
+        {ITEMS.map(({ href, label }) => {
+          const active = pathname === href;
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition ${
+                active
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              }`}
+            >
+              {label}
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
