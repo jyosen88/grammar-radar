@@ -37,16 +37,11 @@ $$;
 --    合格片段长度必须覆盖关键词一半以上（最短长度 floor(kl/2)+1，
 --    如 6 字词至少命中 4 字、5 字词至少 3 字），防止“合名词”这类
 --    碎片在“集合名词”等卡片上刷分。
---    字段得分 = 字段权重(title 3 / notes 3 / rules_table 2)
---               × 命中窗口长度 × 同长度命中窗口数 / 关键词长度。
---      · notes 与 title 同权：知识点的实际语境往往写在 notes 里；
---      · 同长度多窗口命中（如同时含“复合名词”和“名词复数”）能把
---        真正对口的细分卡片顶到只命中单窗口的泛匹配卡片之前。
---    任一字段出现关键词完全匹配（hit_len = kl）时，该关键词 +5 分。
---    基础得分在一张卡片上封顶 8 分（3 最高字段权重 + 5 奖励），
---    同一关键词多字段重复出现不超过“一次完全命中”档；命中多个不同
---    关键词仍可累加。
---    精准词组亲和规则（不受 8 分封顶限制，直接加在总分上）：
+--    明确的权重规则（每个关键词在一张卡片上取三个字段中的最高档）：
+--      · 完整词组匹配（任一字段完整包含关键词，如“the number of”）→ 5 分
+--      · 部分匹配（任一字段命中合格片段，如“主谓一致”命中部分字段）→ 3 分
+--    命中多个不同关键词时得分累加。
+--    精准词组亲和规则（直接加在总分上）：
 --      · 关键词含 'the number of' 或 'a number of' → M-002 +10
 --      · 关键词含 '复合名词'、'man/woman' 或 '名词作定语' → N-006 +10
 --    新增规则时在 c_affinity 的 case 里追加 when 分支即可。
@@ -62,7 +57,7 @@ as $$
   select g.*
   from public.grammar_cards g
   cross join lateral (
-    select coalesce(sum(least(base_score, 8) + affinity), 0) as score
+    select coalesce(sum(base_score + affinity), 0) as score
     from unnest(p_keywords) as raw_kw
     cross join lateral (select lower(raw_kw) as kw) c_kw
     cross join lateral (select char_length(kw) as kl) c_len
@@ -71,13 +66,16 @@ as $$
     left join lateral public.chunk_best(kw, lower(coalesce(g.notes, '')), min_len) bn on true
     left join lateral public.chunk_best(kw, lower(coalesce(g.rules_table::text, '')), min_len) br on true
     cross join lateral (
-      select
-          coalesce(3.0 * bt.hit_len * bt.hit_cnt / kl, 0)
-        + coalesce(3.0 * bn.hit_len * bn.hit_cnt / kl, 0)
-        + coalesce(2.0 * br.hit_len * br.hit_cnt / kl, 0)
-        + case when bt.hit_len = kl or bn.hit_len = kl or br.hit_len = kl
-               then 5.0 else 0 end
-        as base_score
+      select case
+               -- 完整词组匹配：任一字段完整包含关键词 → 5 分
+               when bt.hit_len = kl or bn.hit_len = kl or br.hit_len = kl
+                    then 5.0
+               -- 部分匹配：任一字段命中合格片段 → 3 分
+               when bt.hit_len is not null or bn.hit_len is not null
+                    or br.hit_len is not null
+                    then 3.0
+               else 0
+             end as base_score
     ) c_base
     cross join lateral (
       select case
