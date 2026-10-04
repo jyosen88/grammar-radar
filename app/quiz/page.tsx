@@ -30,6 +30,58 @@ interface QuizState {
   cursor: number; // 当前显示的条目下标
 }
 
+/** 一条反馈记录（暂存 localStorage，后端就绪后再迁移） */
+interface FeedbackRecord {
+  id: string;
+  questionId: string; // quiz_questions 的 uuid
+  questionNo: number; // 界面上的题号（从 1 开始）
+  questionText: string;
+  type: string;
+  description: string;
+  screenshot: string | null; // 压缩后的 dataURL
+  createdAt: string;
+}
+
+const FEEDBACK_TYPES = ["题目错误", "答案错误", "知识点卡片错误", "解析错误", "其他"];
+const FEEDBACK_KEY = "quiz_feedback";
+
+/** 截图压缩成最长边 800px 的 JPEG dataURL，避免撑爆 localStorage */
+async function fileToCompressedDataUrl(file: File, max = 800): Promise<string> {
+  const dataUrl = await new Promise<string>((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result));
+    r.onerror = () => rej(new Error("读取文件失败"));
+    r.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error("图片解析失败"));
+    i.src = dataUrl;
+  });
+  const scale = Math.min(1, max / Math.max(img.width, img.height));
+  const w = Math.round(img.width * scale);
+  const h = Math.round(img.height * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL("image/jpeg", 0.7);
+}
+
+/** 追加保存反馈；容量不足等异常只降级到 console，不阻塞用户 */
+function saveFeedback(rec: FeedbackRecord): boolean {
+  try {
+    const list = JSON.parse(localStorage.getItem(FEEDBACK_KEY) ?? "[]");
+    list.push(rec);
+    localStorage.setItem(FEEDBACK_KEY, JSON.stringify(list));
+    return true;
+  } catch (e) {
+    console.warn("[quiz] 反馈写入 localStorage 失败（可能超出容量）", e);
+    return false;
+  }
+}
+
 const LETTERS = ["A", "B", "C", "D"] as const;
 
 /** Fisher-Yates 洗牌 */
@@ -50,6 +102,17 @@ export default function QuizPage() {
   const [quiz, setQuiz] = useState<QuizState>({ entries: [], cursor: -1 });
   const quizRef = useRef(quiz);
   quizRef.current = quiz;
+
+  // 反馈/纠错弹窗状态
+  const [fbOpen, setFbOpen] = useState(false);
+  const [fbType, setFbType] = useState(FEEDBACK_TYPES[0]);
+  const [fbDesc, setFbDesc] = useState("");
+  const [fbShot, setFbShot] = useState<{ name: string; dataUrl: string } | null>(
+    null
+  );
+  const [fbError, setFbError] = useState<string | null>(null);
+  const [fbToast, setFbToast] = useState(false);
+  const fbToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const allRef = useRef<QuizQuestion[]>([]); // 全部题目（重洗牌用）
   const deckRef = useRef<QuizQuestion[]>([]); // 待抽题堆
@@ -177,6 +240,60 @@ export default function QuizPage() {
       // 答错：搜知识点卡片展示
       void loadCards(entry.q, cursor);
     }
+  }
+
+  /** 打开反馈弹窗（重置表单） */
+  function openFeedback() {
+    setFbType(FEEDBACK_TYPES[0]);
+    setFbDesc("");
+    setFbShot(null);
+    setFbError(null);
+    setFbOpen(true);
+  }
+
+  /** 选择截图：压缩后暂存预览 */
+  async function handleShotChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 允许重复选择同一文件
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setFbError("截图只支持图片文件");
+      return;
+    }
+    try {
+      const dataUrl = await fileToCompressedDataUrl(file);
+      setFbShot({ name: file.name, dataUrl });
+      setFbError(null);
+    } catch (err) {
+      setFbError(err instanceof Error ? err.message : "截图处理失败");
+    }
+  }
+
+  /** 提交反馈：前端校验必填项 → localStorage + console.log */
+  function submitFeedback() {
+    const { entries, cursor } = quizRef.current;
+    const entry = entries[cursor];
+    if (!entry) return;
+    if (!fbDesc.trim()) {
+      setFbError("请填写具体描述");
+      return;
+    }
+    const rec: FeedbackRecord = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      questionId: entry.q.id,
+      questionNo: cursor + 1,
+      questionText: entry.q.question_text,
+      type: fbType,
+      description: fbDesc.trim(),
+      screenshot: fbShot?.dataUrl ?? null,
+      createdAt: new Date().toISOString(),
+    };
+    console.log("[quiz] 收到反馈/纠错：", rec);
+    saveFeedback(rec);
+    setFbOpen(false);
+    setFbToast(true);
+    if (fbToastTimer.current) clearTimeout(fbToastTimer.current);
+    fbToastTimer.current = setTimeout(() => setFbToast(false), 2500);
   }
 
   const { entries, cursor } = quiz;
@@ -334,7 +451,7 @@ using (true);`}
               </div>
             )}
 
-            {/* 上一题 / 下一题 */}
+            {/* 上一题 / 下一题 / 反馈 */}
             <div className="flex items-center justify-between border-t border-slate-100 pt-4">
               <button
                 type="button"
@@ -347,13 +464,22 @@ using (true);`}
               <span className="text-xs text-slate-400">
                 {cursor + 1} / {entries.length}
               </span>
-              <button
-                type="button"
-                onClick={moveNext}
-                className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
-              >
-                下一题 →
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openFeedback}
+                  className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:border-amber-400 hover:text-amber-700"
+                >
+                  反馈/纠错
+                </button>
+                <button
+                  type="button"
+                  onClick={moveNext}
+                  className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
+                >
+                  下一题 →
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -366,6 +492,137 @@ using (true);`}
           </p>
         )}
       </main>
+
+      {/* 反馈/纠错 Modal */}
+      {fbOpen && current && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          onClick={() => setFbOpen(false)}
+        >
+          <div
+            className="w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900">反馈/纠错</h3>
+              <button
+                type="button"
+                onClick={() => setFbOpen(false)}
+                className="rounded-lg px-2 py-1 text-sm text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* 题目 ID（自动带出，只读） */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600">题目</label>
+              <input
+                type="text"
+                readOnly
+                value={`第 ${cursor + 1} 题 · ID ${current.q.id}`}
+                className="w-full cursor-default rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500"
+              />
+            </div>
+
+            {/* 问题类型 */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600">问题类型</label>
+              <select
+                value={fbType}
+                onChange={(e) => setFbType(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              >
+                {FEEDBACK_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 具体描述（必填） */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600">
+                具体描述 <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={fbDesc}
+                onChange={(e) => {
+                  setFbDesc(e.target.value);
+                  if (fbError) setFbError(null);
+                }}
+                rows={4}
+                placeholder="请描述问题，例如：这道题的正确答案应该是…"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              />
+            </div>
+
+            {/* 截图上传（可选） */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600">截图上传（可选）</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleShotChange}
+                className="w-full text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
+              />
+              {fbShot && (
+                <div className="flex items-center gap-2.5 rounded-lg border border-indigo-200 bg-indigo-50 p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={fbShot.dataUrl}
+                    alt="截图预览"
+                    className="h-12 w-12 shrink-0 rounded-md border border-indigo-200 object-cover"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-xs text-indigo-800">
+                    {fbShot.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFbShot(null)}
+                    className="shrink-0 text-xs text-slate-400 hover:text-red-600"
+                  >
+                    移除
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 校验错误提示 */}
+            {fbError && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {fbError}
+              </p>
+            )}
+
+            {/* 操作按钮 */}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setFbOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={submitFeedback}
+                className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
+              >
+                提交
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 提交成功提示 */}
+      {fbToast && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-2.5 text-sm font-medium text-emerald-800 shadow-lg">
+          ✅ 反馈已提交，感谢反馈
+        </div>
+      )}
     </div>
   );
 }
