@@ -1,7 +1,7 @@
-"use client";
+﻿"use client";
 
 import { useRef, useState } from "react";
-import { supabase, type GrammarCard } from "@/lib/supabase";
+import { getSupabase, type GrammarCard } from "@/lib/supabase";
 import { parseRulesTable, type TableData } from "@/lib/rules-table";
 
 /** AI 分析返回的单个语法错误 */
@@ -196,7 +196,7 @@ export default function Home() {
       Boolean
     );
     if (keywords.length) {
-      const { data: matched, error: rpcErr } = await supabase.rpc(
+      const { data: matched, error: rpcErr } = await getSupabase().rpc(
         "search_grammar_cards",
         { p_keywords: keywords, p_limit: 3 }
       );
@@ -240,11 +240,11 @@ export default function Home() {
       const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
       // 时间戳 + 随机数，避免重名
       const path = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}.${ext}`;
-      const { error: upErr } = await supabase.storage
+      const { error: upErr } = await getSupabase().storage
         .from(ERROR_BUCKET)
         .upload(path, file, { contentType: file.type, upsert: false });
       if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage
+      const { data: urlData } = getSupabase().storage
         .from(ERROR_BUCKET)
         .getPublicUrl(path);
       const imageUrl = urlData.publicUrl;
