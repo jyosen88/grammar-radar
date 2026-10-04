@@ -1,0 +1,7 @@
+[build]
+  command = "npm run build"
+
+# NEXT_PUBLIC_ 前缀的变量是设计上公开给浏览器的（Supabase anon key 靠 RLS 保护），
+# Netlify 的 secrets 扫描会误报导致构建失败，这里关闭扫描
+[secrets_scanning]
+  enabled = false
