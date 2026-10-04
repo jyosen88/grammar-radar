@@ -17,12 +17,22 @@ interface QuizQuestion {
   category: string | null;
 }
 
+/** /api/quiz-analyze 返回的题目解析（已做字段清洗） */
+interface QuizAnalysis {
+  topic: string; // 本题核心考点
+  explanation: string; // 题目解析：为什么正确答案正确
+  wrongReason: string; // 错因分析：学生选的选项为什么错
+  knowledgePoints: string[]; // 知识点术语
+}
+
 /** 一次做题记录（含作答状态），历史里每道题都有 */
 interface QuizEntry {
   q: QuizQuestion;
   picked: string | null; // 用户选的字母；null = 未作答
   correctLetter: string | null;
   cards: GrammarCard[] | null; // 答错时的知识点卡片；null = 加载中
+  analysis: QuizAnalysis | null; // AI 题目解析；null = AI 不可用
+  cardsSource: "ai" | "keyword" | null; // 卡片来源：AI 精确匹配 / 关键词降级
 }
 
 interface QuizState {
@@ -94,6 +104,26 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+/** 清洗 /api/quiz-analyze 响应：字段归一化；四个内容字段全空视为解析失败 */
+function normalizeQuizAnalysis(data: unknown): QuizAnalysis | null {
+  const o = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const knowledgePoints = Array.isArray(o.knowledge_points)
+    ? o.knowledge_points
+        .filter((k): k is string => typeof k === "string")
+        .map((k) => k.trim())
+        .filter(Boolean)
+        .slice(0, 3)
+    : [];
+  const a: QuizAnalysis = {
+    topic: str(o.topic),
+    explanation: str(o.explanation),
+    wrongReason: str(o.wrong_reason),
+    knowledgePoints,
+  };
+  return a.topic || a.explanation || a.wrongReason ? a : null;
+}
+
 export default function QuizPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -147,7 +177,13 @@ export default function QuizPage() {
         allRef.current = rows;
         deckRef.current = shuffle(rows);
         const q = takeQuestion();
-        if (q) setQuiz({ entries: [{ q, picked: null, correctLetter: null, cards: null }], cursor: 0 });
+        if (q)
+          setQuiz({
+            entries: [
+              { q, picked: null, correctLetter: null, cards: null, analysis: null, cardsSource: null },
+            ],
+            cursor: 0,
+          });
       } catch (e) {
         if (alive) setLoadError(e instanceof Error ? e.message : "题目加载失败");
       } finally {
@@ -192,60 +228,113 @@ export default function QuizPage() {
     }
     const q = takeQuestion();
     if (!q) return;
-    const entry: QuizEntry = { q, picked: null, correctLetter: null, cards: null };
+    const entry: QuizEntry = {
+      q,
+      picked: null,
+      correctLetter: null,
+      cards: null,
+      analysis: null,
+      cardsSource: null,
+    };
     setQuiz({ entries: [...entries, entry], cursor: entries.length });
   }
 
-  /** 答错时：把题干+正确答案+错误答案交给 /api/analyze，
-   *  由 DeepSeek 从卡片目录里选出最匹配的 1-3 个编号，前端再精确查库 */
+  /** 答错时的智能分析流程：
+   *  ① 把题干/选项/正确答案/错误答案发给 /api/quiz-analyze，DeepSeek 先做
+   *     题目解析（考点+解析+错因+知识点），并返回 1-3 个 card_code；
+   *  ② 前端按编号 .in() 精确查库展示卡片；
+   *  ③ AI 不可用或没匹配到卡片时，降级为 search_grammar_cards RPC 关键词搜卡 */
   async function loadCards(q: QuizQuestion, pickedLetter: string, idx: number) {
-    let cards: GrammarCard[] = [];
-    try {
-      const opts = [q.option_a, q.option_b, q.option_c, q.option_d];
-      const idxOf = (l: string) => "ABCD".indexOf(l);
-      const correctLetter = letterOf(q);
-      const correctText = correctLetter
-        ? opts[idxOf(correctLetter)]
-        : q.correct_answer;
-      const wrongText = opts[idxOf(pickedLetter)];
-      const text = [
-        "这是一道英语语法选择题，请分析它考查的知识点。",
-        `题目：${q.question_text}`,
-        `正确答案：${correctLetter ?? ""} ${correctText ?? ""}`.trim(),
-        `学生选择的错误答案：${pickedLetter} ${wrongText ?? ""}`.trim(),
-      ].join("\n");
+    const opts = [q.option_a, q.option_b, q.option_c, q.option_d];
+    const idxOf = (l: string) => "ABCD".indexOf(l);
+    const correctLetter = letterOf(q);
+    const correctText = correctLetter
+      ? opts[idxOf(correctLetter)]
+      : q.correct_answer;
+    const wrongText = opts[idxOf(pickedLetter)];
 
-      const res = await fetch("/api/analyze", {
+    let cards: GrammarCard[] = [];
+    let analysis: QuizAnalysis | null = null;
+    let aiKeywords: string[] = [];
+    let source: "ai" | "keyword" = "ai";
+
+    // ① 首选：DeepSeek 题目解析 → matched_card_codes → 精确查库
+    try {
+      const res = await fetch("/api/quiz-analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          question_text: q.question_text,
+          category: q.category,
+          options: LETTERS.map((l, i) => ({ letter: l, text: opts[i] ?? "" })),
+          correct_letter: correctLetter,
+          correct_text: correctText ?? "",
+          wrong_letter: pickedLetter,
+          wrong_text: wrongText ?? "",
+        }),
       });
       const data = await res.json();
-      const codes: string[] =
-        res.ok && Array.isArray(data?.matched_card_codes)
+      if (res.ok) {
+        analysis = normalizeQuizAnalysis(data);
+        aiKeywords = analysis?.knowledgePoints ?? [];
+        const codes: string[] = Array.isArray(data?.matched_card_codes)
           ? data.matched_card_codes.filter((c: unknown) => typeof c === "string")
           : [];
-      if (codes.length > 0) {
-        const { data: rows, error } = await getSupabase()
-          .from("grammar_cards")
-          .select("*")
-          .in("card_code", codes);
-        if (!error && rows) {
-          const byCode = new Map(
-            (rows as GrammarCard[]).map((c) => [c.card_code, c])
-          );
-          cards = codes
-            .map((c) => byCode.get(c))
-            .filter((c): c is GrammarCard => !!c);
+        if (codes.length > 0) {
+          const { data: rows, error } = await getSupabase()
+            .from("grammar_cards")
+            .select("*")
+            .in("card_code", codes);
+          if (!error && rows) {
+            const byCode = new Map(
+              (rows as GrammarCard[]).map((c) => [c.card_code, c])
+            );
+            cards = codes
+              .map((c) => byCode.get(c))
+              .filter((c): c is GrammarCard => !!c);
+          }
         }
+      } else {
+        console.warn("[quiz] /api/quiz-analyze 返回错误：", data?.error ?? res.status);
       }
     } catch (e) {
-      console.warn("[quiz] AI 匹配知识点卡片失败", e);
+      console.warn("[quiz] AI 题目解析失败，降级为关键词搜卡", e);
     }
+
+    // ② 降级：AI 不可用 / 无编号 / 查库无结果 → 用关键词走数据库 RPC
+    if (cards.length === 0) {
+      source = "keyword";
+      const keywords = Array.from(
+        new Set(
+          [
+            ...aiKeywords, // AI 给出了知识点但没匹配到卡片时，复用知识点关键词
+            ...(q.category ? [q.category.trim()] : []),
+            ...(q.question_text.match(/[一-龥]{2,}/g) ?? []),
+          ].filter(Boolean)
+        )
+      ).slice(0, 6);
+      if (keywords.length > 0) {
+        try {
+          const { data: rows, error } = await getSupabase().rpc(
+            "search_grammar_cards",
+            { p_keywords: keywords, p_limit: 3 }
+          );
+          if (!error) cards = (rows as GrammarCard[] | null) ?? [];
+        } catch (e) {
+          console.warn("[quiz] 关键词降级搜卡失败", e);
+        }
+      }
+    }
+
     setQuiz((prev) => {
       if (!prev.entries[idx]) return prev; // 条目已被清理
       const entries = [...prev.entries];
-      entries[idx] = { ...entries[idx], cards };
+      entries[idx] = {
+        ...entries[idx],
+        cards,
+        analysis,
+        cardsSource: cards.length > 0 ? source : null,
+      };
       return { ...prev, entries };
     });
   }
@@ -447,6 +536,50 @@ using (true);`}
                       `（${options.find((o) => o.letter === current.correctLetter)?.text ?? ""}）`}
                   </span>
                 </p>
+
+                {/* DeepSeek 智能题目解析：考点 → 题目解析 → 错因分析 → 知识点 */}
+                {current.analysis && (
+                  <div className="space-y-2 rounded-lg bg-white/70 px-3 py-2.5 text-xs text-red-900">
+                    {current.analysis.topic && (
+                      <p className="flex flex-wrap items-center gap-1.5">
+                        <span className="shrink-0 font-semibold text-red-800">考点</span>
+                        <span className="rounded-full bg-red-600 px-2 py-0.5 font-medium text-white">
+                          {current.analysis.topic}
+                        </span>
+                      </p>
+                    )}
+                    {current.analysis.explanation && (
+                      <div>
+                        <p className="font-semibold text-red-800">📝 题目解析</p>
+                        <p className="mt-0.5 leading-relaxed text-slate-700">
+                          {current.analysis.explanation}
+                        </p>
+                      </div>
+                    )}
+                    {current.analysis.wrongReason && (
+                      <div>
+                        <p className="font-semibold text-red-800">❌ 错因分析</p>
+                        <p className="mt-0.5 leading-relaxed text-slate-700">
+                          {current.analysis.wrongReason}
+                        </p>
+                      </div>
+                    )}
+                    {current.analysis.knowledgePoints.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        <span className="font-semibold text-red-800">知识点</span>
+                        {current.analysis.knowledgePoints.map((kw) => (
+                          <span
+                            key={kw}
+                            className="rounded-full bg-red-100 px-2 py-0.5 font-medium text-red-700"
+                          >
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={moveNext}
@@ -462,9 +595,18 @@ using (true);`}
               <div className="space-y-3 border-t border-slate-100 pt-4">
                 <h3 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
                   相关知识点卡片
+                  {current.cardsSource === "keyword" && (
+                    <span className="ml-2 font-normal normal-case text-slate-400">
+                      {current.analysis
+                        ? "（AI 未匹配到对应卡片，以下按知识点关键词推荐）"
+                        : "（AI 分析暂不可用，已按关键词匹配）"}
+                    </span>
+                  )}
                 </h3>
                 {current.cards === null ? (
-                  <p className="text-sm text-slate-400">AI 正在匹配知识点卡片…</p>
+                  <p className="text-sm text-slate-400">
+                    AI 正在分析题目、匹配知识点卡片…
+                  </p>
                 ) : current.cards.length > 0 ? (
                   current.cards.map((card, i) => (
                     <Card key={card.id ?? `${card.card_code}-${i}`} card={card} />

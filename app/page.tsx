@@ -32,6 +32,20 @@ interface GuideStep {
   card_codes: string[];
 }
 
+/** 润色结果中的单条逐句修改说明 */
+interface PolishNote {
+  original: string;
+  revised: string;
+  note: string;
+}
+
+/** /api/polish 返回的润色结果 */
+interface PolishResult {
+  essay: string; // 润色后的完整作文（保留段落）
+  notes: PolishNote[]; // 结构化的逐句说明
+  notesRaw: string; // 说明区原文（结构化解析失败时兜底展示）
+}
+
 export default function Home() {
   // 输入与分析状态
   const [analysisText, setAnalysisText] = useState("");
@@ -47,7 +61,8 @@ export default function Home() {
   const [cardMatches, setCardMatches] = useState<GrammarCard[]>([]);
 
   // 分步引导答题状态
-  const [mode, setMode] = useState<"analyze" | "guide" | null>(null);
+  const [mode, setMode] = useState<"analyze" | "guide" | "polish" | null>(null);
+  const [polish, setPolish] = useState<PolishResult | null>(null);
   const [guide, setGuide] = useState<{
     steps: GuideStep[];
     topic: string;
@@ -70,6 +85,7 @@ export default function Home() {
     setCardMatches([]);
     setMode(null);
     setGuide(null);
+    setPolish(null);
     setGIdx(0);
     setGChosen([]);
     setGFirstCorrect([]);
@@ -149,6 +165,27 @@ export default function Home() {
     setMode("guide");
   }
 
+  /** 调用 /api/polish 润色作文（单句话同样适用），结果分区域展示 */
+  async function runPolish(text: string) {
+    setBusyHint("AI 正在润色英文…");
+    const res = await fetch("/api/polish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error ?? "润色失败，请重试");
+
+    const result: PolishResult = {
+      essay: typeof data?.essay === "string" ? data.essay : "",
+      notes: Array.isArray(data?.notes) ? data.notes : [],
+      notesRaw: typeof data?.notes_raw === "string" ? data.notes_raw : "",
+    };
+    if (!result.essay) throw new Error("AI 未返回润色结果，请重试");
+    setPolish(result);
+    setMode("polish");
+  }
+
   /** 选择某一步的选项 */
   function chooseOption(opt: string) {
     if (!guide) return;
@@ -204,6 +241,22 @@ export default function Home() {
       await runGuide(text);
     } catch (e) {
       setAnalysisError(e instanceof Error ? e.message : "生成引导题失败，请重试");
+    } finally {
+      setBusy(false);
+      setBusyHint("");
+    }
+  }
+
+  /** 文本框润色作文 */
+  async function handlePolish() {
+    const text = analysisText.trim();
+    if (busy || !text) return;
+    setBusy(true);
+    resetResults();
+    try {
+      await runPolish(text);
+    } catch (e) {
+      setAnalysisError(e instanceof Error ? e.message : "润色失败，请重试");
     } finally {
       setBusy(false);
       setBusyHint("");
@@ -341,7 +394,7 @@ export default function Home() {
               disabled={!canAnalyze}
               className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {busy && mode !== "guide" ? (
+              {busy && mode === "analyze" ? (
                 <>
                   <svg
                     className="h-4 w-4 animate-spin"
@@ -366,6 +419,39 @@ export default function Home() {
                 </>
               ) : (
                 <>✨ 智能语法分析</>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={handlePolish}
+              disabled={!canAnalyze}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy && mode === "polish" ? (
+                <>
+                  <svg
+                    className="h-4 w-4 animate-spin"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                    />
+                  </svg>
+                  {busyHint || "处理中…"}
+                </>
+              ) : (
+                <>📝 帮我润色作文</>
               )}
             </button>
             <button
@@ -510,6 +596,74 @@ export default function Home() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {/* 作文润色结果：上方润色后的作文，下方逐句修改说明 */}
+        {mode === "polish" && polish && !busy && (
+          <div className="space-y-5">
+            {/* 上：润色后的完整作文 */}
+            <div className="space-y-3 rounded-2xl border border-emerald-200 bg-white p-5 shadow-sm">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                ✨ 润色后的作文
+              </h3>
+              <p className="whitespace-pre-wrap rounded-xl bg-emerald-50 px-4 py-3 text-sm leading-7 text-slate-800">
+                {polish.essay}
+              </p>
+            </div>
+
+            {/* 下：逐句修改说明 */}
+            <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900">
+                📝 逐句修改说明
+                {polish.notes.length > 0 && (
+                  <span className="ml-2 text-xs font-normal text-slate-400">
+                    共 {polish.notes.length} 处修改
+                  </span>
+                )}
+              </h3>
+              {polish.notes.length > 0 ? (
+                <ul className="space-y-3">
+                  {polish.notes.map((n, i) => (
+                    <li
+                      key={i}
+                      className="space-y-1.5 border-l-4 border-emerald-300 pl-3"
+                    >
+                      {n.original && (
+                        <p className="text-sm">
+                          <span className="text-xs font-semibold text-slate-400">
+                            原句{" "}
+                          </span>
+                          <span className="text-red-600 line-through">
+                            {n.original}
+                          </span>
+                        </p>
+                      )}
+                      {n.revised && (
+                        <p className="text-sm">
+                          <span className="text-xs font-semibold text-slate-400">
+                            修改{" "}
+                          </span>
+                          <span className="font-medium text-emerald-700">
+                            {n.revised}
+                          </span>
+                        </p>
+                      )}
+                      {n.note && (
+                        <p className="rounded-md bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+                          {n.note}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                /* 模型输出格式异常时，用纯文本兜底展示说明区，不丢内容 */
+                <p className="whitespace-pre-wrap rounded-md bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+                  {polish.notesRaw || "原文表达正确，无需修改。"}
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -700,7 +854,7 @@ export default function Home() {
           <div className="py-16 text-center text-slate-400">
             <p className="text-4xl">✍️</p>
             <p className="mt-3 text-sm">
-              粘贴英文句子或上传错题图片，选择智能分析或分步引导答题
+              粘贴英文句子或上传错题图片，选择智能分析、润色作文或分步引导答题
             </p>
           </div>
         )}
