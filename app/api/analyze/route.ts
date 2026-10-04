@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getCardCatalog, validateCardCodes } from "@/lib/card-catalog";
 
 const SYSTEM_PROMPT = `你是一名专业的英语语法老师。你必须分三步依次检查用户提供的英文句子或短文，不允许跳过任何一步，也不允许在只完成前一两步时就输出结果。
 
@@ -39,32 +40,6 @@ const SYSTEM_PROMPT = `你是一名专业的英语语法老师。你必须分三
 5. original 必须是原文中出现的片段，不要改写
 6. 如果同一段文字有多个错误，必须分开逐条列出（例如 there be 的主谓一致错误和名词单复数错误要分成两条），不要合并
 7. 只列出真正有错误或需要改进的片段，原文正确的部分不要列为错误`;
-
-// 服务端缓存卡片目录（card_code + title），避免每次请求都查库
-let catalogCache: { codes: string[]; promptList: string; at: number } | null = null;
-const CATALOG_TTL_MS = 10 * 60 * 1000;
-
-async function getCardCatalog(): Promise<{ codes: string[]; promptList: string }> {
-  if (catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) {
-    return catalogCache;
-  }
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error("Supabase 环境变量未配置");
-  const res = await fetch(
-    `${url}/rest/v1/grammar_cards?select=card_code,title&order=card_code`,
-    { headers: { apikey: key, Authorization: `Bearer ${key}` } }
-  );
-  if (!res.ok) throw new Error(`获取知识点目录失败（${res.status}）`);
-  const rows: { card_code: string; title: string }[] = await res.json();
-  const catalog = {
-    codes: rows.map((r) => r.card_code),
-    promptList: rows.map((r) => `${r.card_code} ${r.title}`).join("\n"),
-    at: Date.now(),
-  };
-  catalogCache = catalog;
-  return catalog;
-}
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -146,22 +121,10 @@ ${catalog.promptList}
     const errors = Array.isArray(parsed?.errors) ? parsed.errors : [];
 
     // 校验 matched_card_codes：只保留目录中真实存在的编号，未知编号记录日志
-    const rawCodes: unknown[] = Array.isArray(parsed?.matched_card_codes)
-      ? (parsed.matched_card_codes as unknown[])
-      : [];
-    const validSet = new Set(catalog.codes);
-    const matchedCardCodes: string[] = [];
-    const unknownCodes: string[] = [];
-    for (const c of rawCodes) {
-      if (typeof c !== "string") continue;
-      if (validSet.has(c)) matchedCardCodes.push(c);
-      else unknownCodes.push(c);
-    }
-    if (unknownCodes.length > 0) {
-      console.warn(
-        `[analyze] AI 返回了知识库中不存在的编号，已忽略: ${unknownCodes.join(", ")}`
-      );
-    }
+    const matchedCardCodes = validateCardCodes(
+      parsed?.matched_card_codes,
+      catalog.codes
+    );
 
     return NextResponse.json({ errors, matched_card_codes: matchedCardCodes });
   } catch (e) {
