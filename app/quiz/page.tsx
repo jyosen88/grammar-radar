@@ -17,6 +17,19 @@ interface QuizQuestion {
   category: string | null;
 }
 
+/** 一次做题记录（含作答状态），历史里每道题都有 */
+interface QuizEntry {
+  q: QuizQuestion;
+  picked: string | null; // 用户选的字母；null = 未作答
+  correctLetter: string | null;
+  cards: GrammarCard[] | null; // 答错时的知识点卡片；null = 加载中
+}
+
+interface QuizState {
+  entries: QuizEntry[];
+  cursor: number; // 当前显示的条目下标
+}
+
 const LETTERS = ["A", "B", "C", "D"] as const;
 
 /** Fisher-Yates 洗牌 */
@@ -34,34 +47,26 @@ export default function QuizPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [empty, setEmpty] = useState(false);
 
-  const deckRef = useRef<QuizQuestion[]>([]); // 洗好的题堆
-  const [current, setCurrent] = useState<QuizQuestion | null>(null);
-  const [count, setCount] = useState(0); // 当前题在本次会话中的序号（从 1 开始）
+  const [quiz, setQuiz] = useState<QuizState>({ entries: [], cursor: -1 });
+  const quizRef = useRef(quiz);
+  quizRef.current = quiz;
 
-  const [answered, setAnswered] = useState(false);
-  const [picked, setPicked] = useState<string | null>(null); // 用户选的选项字母
-  const [correctLetter, setCorrectLetter] = useState<string | null>(null);
-  const [relatedCards, setRelatedCards] = useState<GrammarCard[]>([]);
-  const [cardLoading, setCardLoading] = useState(false);
+  const allRef = useRef<QuizQuestion[]>([]); // 全部题目（重洗牌用）
+  const deckRef = useRef<QuizQuestion[]>([]); // 待抽题堆
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 进度统计
-  const [answeredCount, setAnsweredCount] = useState(0);
-  const [correctCount, setCorrectCount] = useState(0);
-
-  /** 从题堆里抽下一题；抽完自动重新洗牌 */
-  const drawNext = useCallback(() => {
-    if (deckRef.current.length === 0) return;
+  /** 从题堆抽一题；抽完自动重新洗牌，保证永远有下一题 */
+  const takeQuestion = useCallback((): QuizQuestion | null => {
+    if (allRef.current.length === 0) return null;
+    if (deckRef.current.length === 0) {
+      deckRef.current = shuffle(allRef.current);
+    }
     const [q, ...rest] = deckRef.current;
     deckRef.current = rest;
-    setCurrent(q);
-    setCount((c) => c + 1);
-    setAnswered(false);
-    setPicked(null);
-    setCorrectLetter(null);
-    setRelatedCards([]);
+    return q;
   }, []);
 
-  /** 首次进入：拉全部题目（50 道很小），洗牌后开始 */
+  /** 首次进入：拉全部题目，洗牌后出第一题 */
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -76,20 +81,21 @@ export default function QuizPage() {
           setEmpty(true);
           return;
         }
+        allRef.current = rows;
         deckRef.current = shuffle(rows);
-        drawNext();
+        const q = takeQuestion();
+        if (q) setQuiz({ entries: [{ q, picked: null, correctLetter: null, cards: null }], cursor: 0 });
       } catch (e) {
-        if (alive) {
-          setLoadError(e instanceof Error ? e.message : "题目加载失败");
-        }
+        if (alive) setLoadError(e instanceof Error ? e.message : "题目加载失败");
       } finally {
         if (alive) setLoading(false);
       }
     })();
     return () => {
       alive = false;
+      if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [drawNext]);
+  }, [takeQuestion]);
 
   /** 把 correct_answer 归一化成 A/B/C/D 字母（兼容存字母或存完整选项两种情况） */
   function letterOf(q: QuizQuestion): string | null {
@@ -102,52 +108,92 @@ export default function QuizPage() {
     return idx >= 0 ? LETTERS[idx] : null;
   }
 
-  /** 答错时：用题目的 category 和题干里的中文关键词搜知识点卡片 */
-  async function searchCards(q: QuizQuestion) {
+  /** 手动切换题目：清除可能触发的自动跳转定时器 */
+  function goTo(idx: number) {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setQuiz((prev) => ({
+      ...prev,
+      cursor: Math.max(0, Math.min(idx, prev.entries.length - 1)),
+    }));
+  }
+
+  /** 下一题：历史里有就前进，到末尾就抽新题 */
+  function moveNext() {
+    const { entries, cursor } = quizRef.current;
+    if (cursor < entries.length - 1) {
+      goTo(cursor + 1);
+      return;
+    }
+    const q = takeQuestion();
+    if (!q) return;
+    const entry: QuizEntry = { q, picked: null, correctLetter: null, cards: null };
+    setQuiz({ entries: [...entries, entry], cursor: entries.length });
+  }
+
+  /** 答错时：用题目的 category 和题干里的中文关键词搜知识点卡片，回填到对应条目 */
+  async function loadCards(q: QuizQuestion, idx: number) {
     const keywords = [
       ...(q.category ? [q.category.trim()] : []),
       ...(q.question_text.match(/[\u4e00-\u9fa5]{2,}/g) ?? []),
     ]
       .slice(0, 4)
       .filter(Boolean);
-    if (keywords.length === 0) return;
-    setCardLoading(true);
-    try {
-      const { data, error } = await getSupabase().rpc("search_grammar_cards", {
-        p_keywords: keywords,
-        p_limit: 3,
-      });
-      if (error) throw error;
-      setRelatedCards((data as GrammarCard[] | null) ?? []);
-    } catch {
-      // 搜索失败不阻塞答题流程，卡片区留空即可
-      setRelatedCards([]);
-    } finally {
-      setCardLoading(false);
+    let cards: GrammarCard[] = [];
+    if (keywords.length > 0) {
+      try {
+        const { data, error } = await getSupabase().rpc("search_grammar_cards", {
+          p_keywords: keywords,
+          p_limit: 3,
+        });
+        if (!error) cards = (data as GrammarCard[] | null) ?? [];
+      } catch {
+        cards = [];
+      }
+    }
+    setQuiz((prev) => {
+      if (!prev.entries[idx]) return prev; // 条目已被清理
+      const entries = [...prev.entries];
+      entries[idx] = { ...entries[idx], cards };
+      return { ...prev, entries };
+    });
+  }
+
+  /** 点击选项（已作答的题目锁定，不可重答） */
+  function handlePick(letter: string) {
+    const { entries, cursor } = quizRef.current;
+    const entry = entries[cursor];
+    if (!entry || entry.picked !== null || loading) return;
+    const correct = letterOf(entry.q);
+    const entries2 = [...entries];
+    entries2[cursor] = { ...entry, picked: letter, correctLetter: correct };
+    setQuiz({ entries: entries2, cursor });
+    if (correct && letter === correct) {
+      // 答对：延迟 1 秒自动进入下一题
+      timerRef.current = setTimeout(() => moveNext(), 1000);
+    } else {
+      // 答错：搜知识点卡片展示
+      void loadCards(entry.q, cursor);
     }
   }
 
-  /** 点击选项 */
-  function handlePick(letter: string, q: QuizQuestion) {
-    if (answered || loading) return;
-    const correct = letterOf(q);
-    setAnswered(true);
-    setPicked(letter);
-    setCorrectLetter(correct);
-    setAnsweredCount((n) => n + 1);
-    if (correct && letter === correct) {
-      setCorrectCount((n) => n + 1);
-      // 答对：延迟 1 秒自动下一题
-      setTimeout(() => drawNext(), 1000);
-    } else {
-      // 答错：搜知识点卡片展示
-      void searchCards(q);
-    }
-  }
+  const { entries, cursor } = quiz;
+  const current = cursor >= 0 ? entries[cursor] : null;
+  const answeredCount = entries.filter((e) => e.picked !== null).length;
+  const correctCount = entries.filter(
+    (e) => e.picked !== null && e.picked === e.correctLetter
+  ).length;
 
   const options = current
     ? LETTERS.map((l, i) => {
-        const text = [current.option_a, current.option_b, current.option_c, current.option_d][i];
+        const text = [
+          current.q.option_a,
+          current.q.option_b,
+          current.q.option_c,
+          current.q.option_d,
+        ][i];
         return { letter: l, text };
       }).filter((o) => (o.text ?? "").trim() !== "")
     : [];
@@ -195,23 +241,25 @@ using (true);`}
           <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white">
-                第 {count} 题
+                第 {cursor + 1} 题
               </span>
-              {current.category && (
+              {current.q.category && (
                 <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
-                  {current.category}
+                  {current.q.category}
                 </span>
               )}
             </div>
 
             <p className="text-base font-medium text-slate-900">
-              {current.question_text}
+              {current.q.question_text}
             </p>
 
             <div className="space-y-2">
               {options.map(({ letter, text }) => {
-                const isCorrect = answered && letter === correctLetter;
-                const isWrongPick = answered && letter === picked && letter !== correctLetter;
+                const answered = current.picked !== null;
+                const isCorrect = answered && letter === current.correctLetter;
+                const isWrongPick =
+                  answered && letter === current.picked && letter !== current.correctLetter;
                 let cls =
                   "border-slate-200 bg-white text-slate-700 hover:border-indigo-400 hover:bg-indigo-50";
                 if (answered) {
@@ -224,7 +272,7 @@ using (true);`}
                     key={letter}
                     type="button"
                     disabled={answered}
-                    onClick={() => handlePick(letter, current)}
+                    onClick={() => handlePick(letter)}
                     className={`flex w-full items-center gap-2.5 rounded-xl border px-4 py-2.5 text-left text-sm transition disabled:cursor-default ${cls}`}
                   >
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-current text-xs font-semibold opacity-70">
@@ -239,26 +287,26 @@ using (true);`}
             </div>
 
             {/* 答对提示 */}
-            {answered && picked === correctLetter && (
+            {current.picked !== null && current.picked === current.correctLetter && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
                 ✅ 答对了！马上进入下一题…
               </div>
             )}
 
             {/* 答错提示 */}
-            {answered && picked !== correctLetter && (
+            {current.picked !== null && current.picked !== current.correctLetter && (
               <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
                 <p className="text-sm font-semibold text-red-800">
                   ❌ 答错了，正确答案是{" "}
                   <span className="font-bold">
-                    {correctLetter ?? "—"}
-                    {correctLetter &&
-                      `（${options.find((o) => o.letter === correctLetter)?.text ?? ""}）`}
+                    {current.correctLetter ?? "—"}
+                    {current.correctLetter &&
+                      `（${options.find((o) => o.letter === current.correctLetter)?.text ?? ""}）`}
                   </span>
                 </p>
                 <button
                   type="button"
-                  onClick={drawNext}
+                  onClick={moveNext}
                   className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
                 >
                   下一题 →
@@ -267,15 +315,15 @@ using (true);`}
             )}
 
             {/* 答错后的知识点卡片 */}
-            {answered && picked !== correctLetter && (
+            {current.picked !== null && current.picked !== current.correctLetter && (
               <div className="space-y-3 border-t border-slate-100 pt-4">
                 <h3 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
                   相关知识点卡片
                 </h3>
-                {cardLoading ? (
+                {current.cards === null ? (
                   <p className="text-sm text-slate-400">正在搜索知识点…</p>
-                ) : relatedCards.length > 0 ? (
-                  relatedCards.map((card, i) => (
+                ) : current.cards.length > 0 ? (
+                  current.cards.map((card, i) => (
                     <Card key={card.id ?? `${card.card_code}-${i}`} card={card} />
                   ))
                 ) : (
@@ -285,6 +333,28 @@ using (true);`}
                 )}
               </div>
             )}
+
+            {/* 上一题 / 下一题 */}
+            <div className="flex items-center justify-between border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => goTo(cursor - 1)}
+                disabled={cursor <= 0}
+                className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                ← 上一题
+              </button>
+              <span className="text-xs text-slate-400">
+                {cursor + 1} / {entries.length}
+              </span>
+              <button
+                type="button"
+                onClick={moveNext}
+                className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-400 hover:text-slate-900"
+              >
+                下一题 →
+              </button>
+            </div>
           </div>
         )}
 
