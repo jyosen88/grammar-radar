@@ -20,10 +20,10 @@ export function SiteNav() {
             <Link
               key={href}
               href={href}
-              className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition ${
+              className={`rounded-lg border px-3.5 py-1.5 text-sm font-medium transition ${
                 active
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  ? "border-indigo-600 bg-indigo-600 text-white shadow-sm"
+                  : "border-slate-200 bg-slate-100 text-slate-600 hover:border-slate-300 hover:bg-slate-200 hover:text-slate-900"
               }`}
             >
               {label}
