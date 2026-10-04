@@ -196,25 +196,51 @@ export default function QuizPage() {
     setQuiz({ entries: [...entries, entry], cursor: entries.length });
   }
 
-  /** 答错时：用题目的 category 和题干里的中文关键词搜知识点卡片，回填到对应条目 */
-  async function loadCards(q: QuizQuestion, idx: number) {
-    const keywords = [
-      ...(q.category ? [q.category.trim()] : []),
-      ...(q.question_text.match(/[\u4e00-\u9fa5]{2,}/g) ?? []),
-    ]
-      .slice(0, 4)
-      .filter(Boolean);
+  /** 答错时：把题干+正确答案+错误答案交给 /api/analyze，
+   *  由 DeepSeek 从卡片目录里选出最匹配的 1-3 个编号，前端再精确查库 */
+  async function loadCards(q: QuizQuestion, pickedLetter: string, idx: number) {
     let cards: GrammarCard[] = [];
-    if (keywords.length > 0) {
-      try {
-        const { data, error } = await getSupabase().rpc("search_grammar_cards", {
-          p_keywords: keywords,
-          p_limit: 3,
-        });
-        if (!error) cards = (data as GrammarCard[] | null) ?? [];
-      } catch {
-        cards = [];
+    try {
+      const opts = [q.option_a, q.option_b, q.option_c, q.option_d];
+      const idxOf = (l: string) => "ABCD".indexOf(l);
+      const correctLetter = letterOf(q);
+      const correctText = correctLetter
+        ? opts[idxOf(correctLetter)]
+        : q.correct_answer;
+      const wrongText = opts[idxOf(pickedLetter)];
+      const text = [
+        "这是一道英语语法选择题，请分析它考查的知识点。",
+        `题目：${q.question_text}`,
+        `正确答案：${correctLetter ?? ""} ${correctText ?? ""}`.trim(),
+        `学生选择的错误答案：${pickedLetter} ${wrongText ?? ""}`.trim(),
+      ].join("\n");
+
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      const codes: string[] =
+        res.ok && Array.isArray(data?.matched_card_codes)
+          ? data.matched_card_codes.filter((c: unknown) => typeof c === "string")
+          : [];
+      if (codes.length > 0) {
+        const { data: rows, error } = await getSupabase()
+          .from("grammar_cards")
+          .select("*")
+          .in("card_code", codes);
+        if (!error && rows) {
+          const byCode = new Map(
+            (rows as GrammarCard[]).map((c) => [c.card_code, c])
+          );
+          cards = codes
+            .map((c) => byCode.get(c))
+            .filter((c): c is GrammarCard => !!c);
+        }
       }
+    } catch (e) {
+      console.warn("[quiz] AI 匹配知识点卡片失败", e);
     }
     setQuiz((prev) => {
       if (!prev.entries[idx]) return prev; // 条目已被清理
@@ -237,8 +263,8 @@ export default function QuizPage() {
       // 答对：延迟 1 秒自动进入下一题
       timerRef.current = setTimeout(() => moveNext(), 1000);
     } else {
-      // 答错：搜知识点卡片展示
-      void loadCards(entry.q, cursor);
+      // 答错：AI 匹配知识点卡片
+      void loadCards(entry.q, letter, cursor);
     }
   }
 
@@ -438,7 +464,7 @@ using (true);`}
                   相关知识点卡片
                 </h3>
                 {current.cards === null ? (
-                  <p className="text-sm text-slate-400">正在搜索知识点…</p>
+                  <p className="text-sm text-slate-400">AI 正在匹配知识点卡片…</p>
                 ) : current.cards.length > 0 ? (
                   current.cards.map((card, i) => (
                     <Card key={card.id ?? `${card.card_code}-${i}`} card={card} />
