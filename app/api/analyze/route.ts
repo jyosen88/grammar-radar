@@ -40,6 +40,32 @@ const SYSTEM_PROMPT = `你是一名专业的英语语法老师。你必须分三
 6. 如果同一段文字有多个错误，必须分开逐条列出（例如 there be 的主谓一致错误和名词单复数错误要分成两条），不要合并
 7. 只列出真正有错误或需要改进的片段，原文正确的部分不要列为错误`;
 
+// 服务端缓存卡片目录（card_code + title），避免每次请求都查库
+let catalogCache: { codes: string[]; promptList: string; at: number } | null = null;
+const CATALOG_TTL_MS = 10 * 60 * 1000;
+
+async function getCardCatalog(): Promise<{ codes: string[]; promptList: string }> {
+  if (catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) {
+    return catalogCache;
+  }
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) throw new Error("Supabase 环境变量未配置");
+  const res = await fetch(
+    `${url}/rest/v1/grammar_cards?select=card_code,title&order=card_code`,
+    { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+  );
+  if (!res.ok) throw new Error(`获取知识点目录失败（${res.status}）`);
+  const rows: { card_code: string; title: string }[] = await res.json();
+  const catalog = {
+    codes: rows.map((r) => r.card_code),
+    promptList: rows.map((r) => `${r.card_code} ${r.title}`).join("\n"),
+    at: Date.now(),
+  };
+  catalogCache = catalog;
+  return catalog;
+}
+
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
@@ -61,6 +87,22 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const catalog = await getCardCatalog();
+    const promptWithCatalog = `${SYSTEM_PROMPT}
+
+【知识点卡片目录】
+以下是知识库中所有可用的知识点卡片（编号 + 标题）：
+${catalog.promptList}
+
+分析完错误后，你必须从上面的目录中挑选与本次发现的错误最匹配的 1-3 个卡片编号，放入 JSON 的 matched_card_codes 字段（如 ["N-006","M-002"]）。只允许选择目录中真实存在的编号，禁止编造；确实没有匹配的知识点时才返回空数组。最终返回的 JSON 结构：
+{
+  "step1_subject_verb": "...",
+  "step2_nouns": "...",
+  "step3_other": "...",
+  "errors": [...],
+  "matched_card_codes": ["..."]
+}`;
+
     const res = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
@@ -70,11 +112,11 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: promptWithCatalog },
           { role: "user", content: text.slice(0, 4000) },
         ],
         response_format: { type: "json_object" },
-        temperature: 0.2,
+        temperature: 0,
         max_tokens: 3000,
         stream: false,
       }),
@@ -91,7 +133,7 @@ export async function POST(req: NextRequest) {
     const data = await res.json();
     const content: string = data?.choices?.[0]?.message?.content ?? "";
 
-    let parsed: { errors?: unknown };
+    let parsed: { errors?: unknown; matched_card_codes?: unknown };
     try {
       parsed = JSON.parse(content);
     } catch {
@@ -102,7 +144,26 @@ export async function POST(req: NextRequest) {
     }
 
     const errors = Array.isArray(parsed?.errors) ? parsed.errors : [];
-    return NextResponse.json({ errors });
+
+    // 校验 matched_card_codes：只保留目录中真实存在的编号，未知编号记录日志
+    const rawCodes: unknown[] = Array.isArray(parsed?.matched_card_codes)
+      ? (parsed.matched_card_codes as unknown[])
+      : [];
+    const validSet = new Set(catalog.codes);
+    const matchedCardCodes: string[] = [];
+    const unknownCodes: string[] = [];
+    for (const c of rawCodes) {
+      if (typeof c !== "string") continue;
+      if (validSet.has(c)) matchedCardCodes.push(c);
+      else unknownCodes.push(c);
+    }
+    if (unknownCodes.length > 0) {
+      console.warn(
+        `[analyze] AI 返回了知识库中不存在的编号，已忽略: ${unknownCodes.join(", ")}`
+      );
+    }
+
+    return NextResponse.json({ errors, matched_card_codes: matchedCardCodes });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "分析失败，请重试" },

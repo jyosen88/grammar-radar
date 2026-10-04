@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useRef, useState } from "react";
 import { getSupabase, type GrammarCard } from "@/lib/supabase";
@@ -190,18 +190,23 @@ export default function Home() {
     const errors: AnalysisError[] = Array.isArray(data?.errors) ? data.errors : [];
     setAnalysisErrors(errors);
 
-    // 用 AI 给出的关键词在数据库层面搜索（SQL 评分函数，只返回相关度最高的 3 条），
-    // 不再全量拉取 grammar_cards 到浏览器过滤，避免卡片增多后卡死
-    const keywords = [...new Set(errors.flatMap((e) => e.keywords ?? []))].filter(
-      Boolean
-    );
-    if (keywords.length) {
-      const { data: matched, error: rpcErr } = await getSupabase().rpc(
-        "search_grammar_cards",
-        { p_keywords: keywords, p_limit: 3 }
+    // AI 直接返回知识点编号，前端用 .in() 精确取卡，结果稳定可复现
+    const codes: string[] = Array.isArray(data?.matched_card_codes)
+      ? data.matched_card_codes.filter((c: unknown) => typeof c === "string")
+      : [];
+    if (codes.length) {
+      const { data: matched, error: qErr } = await getSupabase()
+        .from("grammar_cards")
+        .select("*")
+        .in("card_code", codes);
+      if (qErr) throw qErr;
+      // 按 AI 返回的编号顺序排列
+      const byCode = new Map(
+        ((matched as GrammarCard[] | null) ?? []).map((c) => [c.card_code, c])
       );
-      if (rpcErr) throw rpcErr;
-      setCardMatches((matched as GrammarCard[] | null) ?? []);
+      setCardMatches(
+        codes.map((c) => byCode.get(c)).filter((c): c is GrammarCard => !!c)
+      );
     }
   }
 
