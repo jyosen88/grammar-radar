@@ -7,7 +7,7 @@ import { Card } from "@/components/GrammarCardView";
 
 /** quiz_questions 表的一行 */
 interface QuizQuestion {
-  id: number;
+  id: string;
   question_text: string;
   option_a: string;
   option_b: string;
