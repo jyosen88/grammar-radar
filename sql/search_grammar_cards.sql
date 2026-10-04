@@ -43,9 +43,14 @@ $$;
 --      · 同长度多窗口命中（如同时含“复合名词”和“名词复数”）能把
 --        真正对口的细分卡片顶到只命中单窗口的泛匹配卡片之前。
 --    任一字段出现关键词完全匹配（hit_len = kl）时，该关键词 +5 分。
---    单个关键词在一张卡片上的得分封顶 8 分（3 最高字段权重 + 5 奖励），
+--    基础得分在一张卡片上封顶 8 分（3 最高字段权重 + 5 奖励），
 --    同一关键词多字段重复出现不超过“一次完全命中”档；命中多个不同
---    关键词仍可累加。按总分从高到低只返回前 p_limit 条。
+--    关键词仍可累加。
+--    精准词组亲和规则（不受 8 分封顶限制，直接加在总分上）：
+--      · 关键词含 'the number of' 或 'a number of' → M-002 +10
+--      · 关键词含 '复合名词'、'man/woman' 或 '名词作定语' → N-006 +10
+--    新增规则时在 c_affinity 的 case 里追加 when 分支即可。
+--    按总分从高到低只返回前 p_limit 条。
 create or replace function public.search_grammar_cards(
   p_keywords text[],
   p_limit integer default 3
@@ -57,7 +62,7 @@ as $$
   select g.*
   from public.grammar_cards g
   cross join lateral (
-    select coalesce(sum(least(kw_score, 8)), 0) as score
+    select coalesce(sum(least(base_score, 8) + affinity), 0) as score
     from unnest(p_keywords) as raw_kw
     cross join lateral (select lower(raw_kw) as kw) c_kw
     cross join lateral (select char_length(kw) as kl) c_len
@@ -72,8 +77,20 @@ as $$
         + coalesce(2.0 * br.hit_len * br.hit_cnt / kl, 0)
         + case when bt.hit_len = kl or bn.hit_len = kl or br.hit_len = kl
                then 5.0 else 0 end
-        as kw_score
-    ) c_score
+        as base_score
+    ) c_base
+    cross join lateral (
+      select case
+               when g.card_code = 'M-002'
+                    and (kw like '%the number of%' or kw like '%a number of%')
+                    then 10.0
+               when g.card_code = 'N-006'
+                    and (kw like '%复合名词%' or kw like '%man/woman%'
+                         or kw like '%名词作定语%')
+                    then 10.0
+               else 0
+             end as affinity
+    ) c_affinity
   ) sc
   where sc.score > 0
   order by sc.score desc, g.card_code
