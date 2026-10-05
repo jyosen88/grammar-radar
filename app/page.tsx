@@ -46,6 +46,15 @@ interface PolishResult {
   notesRaw: string; // 说明区原文（结构化解析失败时兜底展示）
 }
 
+/** /api/essay 返回的作文分析结果 */
+interface EssayResult {
+  onTopic: boolean;
+  onTopicComment: string;
+  structure: string;
+  language: string;
+  errors: AnalysisError[];
+}
+
 export default function Home() {
   // 输入与分析状态
   const [analysisText, setAnalysisText] = useState("");
@@ -61,8 +70,11 @@ export default function Home() {
   const [cardMatches, setCardMatches] = useState<GrammarCard[]>([]);
 
   // 分步引导答题状态
-  const [mode, setMode] = useState<"analyze" | "guide" | "polish" | null>(null);
+  const [mode, setMode] = useState<"analyze" | "guide" | "polish" | "essay" | null>(null);
   const [polish, setPolish] = useState<PolishResult | null>(null);
+  // 作文分析（两步流程）：①题目要求 ②作文
+  const [topicText, setTopicText] = useState("");
+  const [essayResult, setEssayResult] = useState<EssayResult | null>(null);
   const [guide, setGuide] = useState<{
     steps: GuideStep[];
     topic: string;
@@ -78,6 +90,7 @@ export default function Home() {
   const ERROR_BUCKET = "error-bank";
   const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const topicFileInputRef = useRef<HTMLInputElement>(null);
 
   function resetResults() {
     setAnalysisError(null);
@@ -86,6 +99,7 @@ export default function Home() {
     setMode(null);
     setGuide(null);
     setPolish(null);
+    setEssayResult(null);
     setGIdx(0);
     setGChosen([]);
     setGFirstCorrect([]);
@@ -247,6 +261,48 @@ export default function Home() {
     }
   }
 
+  /** 调用 /api/essay：题目要求 + 作文一起分析，并匹配知识点卡片 */
+  async function runEssay(topic: string, essay: string) {
+    setBusyHint("AI 正在批改作文…");
+    const res = await fetch("/api/essay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, essay }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error ?? "作文分析失败，请重试");
+
+    setEssayResult({
+      onTopic: data?.on_topic?.is_on_topic !== false,
+      onTopicComment:
+        typeof data?.on_topic?.comment === "string"
+          ? data.on_topic.comment
+          : "",
+      structure: typeof data?.structure === "string" ? data.structure : "",
+      language: typeof data?.language === "string" ? data.language : "",
+      errors: Array.isArray(data?.errors) ? data.errors : [],
+    });
+
+    // 与智能语法分析一致：AI 返回编号，前端 .in() 精确取卡
+    const codes: string[] = Array.isArray(data?.matched_card_codes)
+      ? data.matched_card_codes.filter((c: unknown) => typeof c === "string")
+      : [];
+    if (codes.length) {
+      const { data: matched, error: qErr } = await getSupabase()
+        .from("grammar_cards")
+        .select("*")
+        .in("card_code", codes);
+      if (qErr) throw qErr;
+      const byCode = new Map(
+        ((matched as GrammarCard[] | null) ?? []).map((c) => [c.card_code, c])
+      );
+      setCardMatches(
+        codes.map((c) => byCode.get(c)).filter((c): c is GrammarCard => !!c)
+      );
+    }
+    setMode("essay");
+  }
+
   /** 文本框润色作文 */
   async function handlePolish() {
     const text = analysisText.trim();
@@ -263,8 +319,28 @@ export default function Home() {
     }
   }
 
-  /** 选图：上传 error-bank → 千问视觉 OCR 回填文本，再由用户选择分析或引导 */
-  async function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  /** 两步作文分析 */
+  async function handleEssay() {
+    const topic = topicText.trim();
+    const essay = analysisText.trim();
+    if (busy || !topic || !essay) return;
+    setBusy(true);
+    resetResults();
+    try {
+      await runEssay(topic, essay);
+    } catch (e) {
+      setAnalysisError(e instanceof Error ? e.message : "作文分析失败，请重试");
+    } finally {
+      setBusy(false);
+      setBusyHint("");
+    }
+  }
+
+  /** 选图：上传 error-bank → 千问视觉 OCR 回填文本；target 决定回填到题目框还是作文框 */
+  async function handleImageSelect(
+    e: React.ChangeEvent<HTMLInputElement>,
+    target: "topic" | "essay"
+  ) {
     const file = e.target.files?.[0];
     e.target.value = ""; // 清空以便可重复选择同一文件
     if (!file) return;
@@ -278,7 +354,7 @@ export default function Home() {
     setSelectedImage(null);
     try {
       // 1. 上传到 Supabase Storage 的 error-bank
-      setBusyHint("正在上传错题图片…");
+      setBusyHint("正在上传图片…");
       const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
       // 时间戳 + 随机数，避免重名
       const path = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}.${ext}`;
@@ -304,10 +380,10 @@ export default function Home() {
         throw new Error(ocrData?.error ?? "图片识别失败，请重试");
       }
       const text = String(ocrData.text ?? "").trim();
-      // 识别出的文字回填文本框，用户核对后选择"智能分析"或"分步引导"
-      setAnalysisText(text);
+      if (target === "topic") setTopicText(text);
+      else setAnalysisText(text);
       if (!text) {
-        throw new Error("没有从图片中识别到英文文字，请换一张更清晰的图片");
+        throw new Error("没有从图片中识别到文字，请换一张更清晰的图片");
       }
     } catch (e) {
       setAnalysisError(e instanceof Error ? e.message : "处理失败，请重试");
@@ -318,6 +394,7 @@ export default function Home() {
   }
 
   const canAnalyze = !busy && !!analysisText.trim();
+  const canEssay = !busy && !!analysisText.trim() && !!topicText.trim();
 
   return (
     <div className="min-h-screen">
@@ -334,14 +411,53 @@ export default function Home() {
             </p>
           </div>
 
-          {/* 文字输入 */}
-          <textarea
-            value={analysisText}
-            onChange={(e) => setAnalysisText(e.target.value)}
-            rows={4}
-            placeholder="粘贴一句或一段英文（比如写错的句子或作文）；也可以直接上传错题图片自动识别…"
-            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-          />
+          {/* 第一步：题目要求（作文分析用，可选） */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-700">
+                ① 题目要求
+                <span className="ml-1 text-xs font-normal text-slate-400">
+                  （作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文）
+                </span>
+              </label>
+              <input
+                ref={topicFileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(e) => handleImageSelect(e, "topic")}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => topicFileInputRef.current?.click()}
+                disabled={busy}
+                className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                📷 上传题目图片
+              </button>
+            </div>
+            <textarea
+              value={topicText}
+              onChange={(e) => setTopicText(e.target.value)}
+              rows={2}
+              placeholder="粘贴作文题目要求（中文也可以），或点右侧按钮上传题目图片自动识别…"
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+            />
+          </div>
+
+          {/* 第二步：作文 / 句子输入 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700">
+              ② 我的作文 / 句子
+            </label>
+            <textarea
+              value={analysisText}
+              onChange={(e) => setAnalysisText(e.target.value)}
+              rows={6}
+              placeholder="粘贴你的作文（作文分析、润色用），或一句/一段英文（智能分析、分步引导用）；也可以点下方按钮上传图片自动识别…"
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+            />
+          </div>
 
           {/* 已上传图片预览 */}
           {selectedImage && (
@@ -371,13 +487,13 @@ export default function Home() {
             </div>
           )}
 
-          {/* 上传图片 + 智能语法分析 并排 */}
+          {/* 上传图片 + 各功能按钮 */}
           <div className="flex flex-wrap items-center gap-3">
             <input
               ref={fileInputRef}
               type="file"
               accept="image/jpeg,image/png,image/webp"
-              onChange={handleImageSelect}
+              onChange={(e) => handleImageSelect(e, "essay")}
               className="hidden"
             />
             <button
@@ -386,7 +502,40 @@ export default function Home() {
               disabled={busy}
               className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              📷 上传图片
+              📷 上传作文图片
+            </button>
+            <button
+              type="button"
+              onClick={handleEssay}
+              disabled={!canEssay}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy && mode === "essay" ? (
+                <>
+                  <svg
+                    className="h-4 w-4 animate-spin"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                    />
+                  </svg>
+                  {busyHint || "处理中…"}
+                </>
+              ) : (
+                <>📋 分析作文</>
+              )}
             </button>
             <button
               type="button"
@@ -488,7 +637,7 @@ export default function Home() {
               )}
             </button>
             <span className="w-full text-xs text-slate-400 sm:w-auto">
-              上传图片：存入错题银行 → 千问识别文字，再选择上方任一模式
+              「分析作文」需要先填①题目要求和②作文；其余按钮只需填②
             </span>
           </div>
 
@@ -507,6 +656,129 @@ export default function Home() {
       </header>
 
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-8">
+        {/* 作文分析结果：扣题 / 结构 / 语言 / 逐处错误 / 知识点卡片 */}
+        {mode === "essay" && essayResult && !busy && (
+          <div className="space-y-5">
+            {/* 总评：扣题 + 结构 + 语言 */}
+            <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900">
+                📋 作文总评
+              </h3>
+              <div
+                className={`rounded-xl border px-4 py-3 ${
+                  essayResult.onTopic
+                    ? "border-emerald-200 bg-emerald-50"
+                    : "border-red-200 bg-red-50"
+                }`}
+              >
+                <p
+                  className={`text-sm font-semibold ${
+                    essayResult.onTopic ? "text-emerald-700" : "text-red-700"
+                  }`}
+                >
+                  {essayResult.onTopic ? "✅ 切题" : "⚠️ 偏题"}
+                </p>
+                {essayResult.onTopicComment && (
+                  <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
+                    {essayResult.onTopicComment}
+                  </p>
+                )}
+              </div>
+              {essayResult.structure && (
+                <div className="rounded-xl bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold text-slate-400">
+                    结构评价
+                  </p>
+                  <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
+                    {essayResult.structure}
+                  </p>
+                </div>
+              )}
+              {essayResult.language && (
+                <div className="rounded-xl bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold text-slate-400">
+                    语言评价
+                  </p>
+                  <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
+                    {essayResult.language}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* 逐处语法错误 */}
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900">
+                语法错误与修改建议（{essayResult.errors.length} 处）
+              </h3>
+              {essayResult.errors.length === 0 ? (
+                <p className="py-2 text-center text-sm text-emerald-700">
+                  ✅ 未发现明显语法错误
+                </p>
+              ) : (
+                <ul className="space-y-3">
+                  {essayResult.errors.map((err, i) => (
+                    <li
+                      key={i}
+                      className="space-y-1.5 border-l-4 border-amber-300 pl-3"
+                    >
+                      <p className="text-sm">
+                        <span className="text-red-600 line-through">
+                          {err.original}
+                        </span>
+                        <span className="mx-1.5 text-slate-400">→</span>
+                        <span className="font-medium text-emerald-700">
+                          {err.corrected}
+                        </span>
+                      </p>
+                      {(err.reason || err.explanation) && (
+                        <div className="rounded-md bg-slate-50 px-3 py-2">
+                          <p className="text-xs font-semibold text-slate-400">
+                            修改建议
+                          </p>
+                          <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
+                            {err.reason || err.explanation}
+                          </p>
+                        </div>
+                      )}
+                      {err.keywords?.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {err.keywords.map((k, j) => (
+                            <span
+                              key={j}
+                              className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700"
+                            >
+                              {k}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {cardMatches.length > 0 ? (
+                <div className="space-y-4 border-t border-slate-100 pt-4">
+                  <h4 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
+                    为你找到 {cardMatches.length} 个相关知识点
+                  </h4>
+                  {cardMatches.map((card, i) => (
+                    <Card
+                      key={card.id ?? `${card.card_code}-${i}`}
+                      card={card}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="border-t border-slate-100 pt-4 text-xs text-slate-400">
+                  卡片库中没有匹配到相关知识点
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {analysisErrors && !busy && (
           <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             {analysisErrors.length === 0 ? (
