@@ -22,7 +22,9 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
     {
       "original": "出错的原文片段",
       "corrected": "修改后的正确写法",
-      "reason": "错误原因及修改建议",
+      "reason": "错误原因",
+      "context_note": "语境/搭配解释",
+      "suggestion": "修改建议",
       "keywords": ["对应的语法知识点关键词"]
     }
   ]
@@ -32,8 +34,12 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
 1. errors 必须包含全部语法错误；如果确实没有语法错误，errors 返回空数组 []
 2. original 必须是作文原文中出现的片段，不要改写
 3. 同一个片段有多个错误时分开逐条列出
-4. keywords 使用简短的中文语法术语（例如：主谓一致、可数名词复数、时态、冠词），每个错误 1-3 个
-5. 全部说明文字用中文，original/corrected 保持英文`;
+4. 每处错误的三个说明字段必须各司其职、内容不重复，按此顺序理解：
+   ① reason（错误原因）：明确指出错在哪里，并说明学生为什么容易犯这个错；
+   ② context_note（语境/搭配解释）：只在涉及语境或固定搭配时填写，讲清这个词/结构在句子里的用法，并给出"错误写法 vs 正确写法"的对比例句；如果只是单纯的规则错误，返回空字符串 ""；
+   ③ suggestion（修改建议）：告诉学生这一处具体怎么改、以后遇到同类情况用什么方法判断（可给一个简短的同类正确例句）。
+5. keywords 使用简短的中文语法术语（例如：主谓一致、可数名词复数、时态、冠词），每个错误 1-3 个
+6. 全部说明文字用中文，original/corrected 保持英文`;
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;

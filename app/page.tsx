@@ -12,6 +12,7 @@ interface AnalysisError {
   reason?: string; // 错误原因（含学生犯错的心理）
   explanation?: string; // 兼容旧字段
   context_note?: string; // 语境/搭配解释，可为空
+  suggestion?: string; // 修改建议（作文分析使用）
   keywords: string[];
 }
 
@@ -322,13 +323,18 @@ export default function Home() {
       r.errors.length
         ? "语法错误：\n" +
           r.errors
-            .map(
-              (e, i) =>
-                `${i + 1}. ${e.original} → ${e.corrected}（${
-                  e.reason ?? ""
-                }）`
-            )
-            .join("\n")
+            .map((e, i) => {
+              const parts = [
+                `${i + 1}. ${e.original} → ${e.corrected}`,
+                e.reason || e.explanation
+                  ? `错误原因：${e.reason ?? e.explanation}`
+                  : "",
+                e.context_note ? `语境解释：${e.context_note}` : "",
+                e.suggestion ? `修改建议：${e.suggestion}` : "",
+              ];
+              return parts.filter(Boolean).join("\n");
+            })
+            .join("\n\n")
         : "",
     ];
     return lines.filter(Boolean).join("\n\n");
@@ -427,7 +433,10 @@ export default function Home() {
         keyword,
         original: err.original,
         corrected: err.corrected,
-        reason: err.reason ?? err.explanation ?? "",
+        reason:
+          [err.reason ?? err.explanation, err.suggestion]
+            .filter(Boolean)
+            .join("\n修改建议：") || "",
       }),
     }).then(async (res) => {
       const data = await res.json();
@@ -496,7 +505,10 @@ export default function Home() {
           keyword: panel.knowledgePoint,
           original: err.original,
           corrected: err.corrected,
-          reason: err.reason ?? err.explanation ?? "",
+          reason:
+            [err.reason ?? err.explanation, err.suggestion]
+              .filter(Boolean)
+              .join("\n修改建议：") || "",
           exclude: panel.exercises.map((ex) => ex.question),
         }),
       });
@@ -943,16 +955,47 @@ export default function Home() {
                           {err.corrected}
                         </span>
                       </p>
-                      {(err.reason || err.explanation) && (
-                        <div className="rounded-md bg-slate-50 px-3 py-2">
-                          <p className="text-xs font-semibold text-slate-400">
-                            修改建议
-                          </p>
-                          <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
-                            {err.reason || err.explanation}
-                          </p>
-                        </div>
-                      )}
+                      {(() => {
+                        // 与"智能语法分析"统一的三段风格：
+                        // 错误原因（灰框）→ 语境解释（琥珀框）→ 修改建议（绿框）
+                        const reason = err.reason || err.explanation || "";
+                        const contextNote = (err.context_note ?? "").trim();
+                        const suggestion = (err.suggestion ?? "").trim();
+                        return (
+                          <>
+                            {reason && (
+                              <div className="rounded-md bg-slate-50 px-3 py-2">
+                                <p className="text-xs font-semibold text-slate-400">
+                                  错误原因
+                                </p>
+                                <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
+                                  {reason}
+                                </p>
+                              </div>
+                            )}
+                            {contextNote && (
+                              <div className="rounded-md bg-amber-50 px-3 py-2">
+                                <p className="text-xs font-semibold text-amber-500">
+                                  语境 / 搭配解释
+                                </p>
+                                <p className="mt-1 text-sm whitespace-pre-line text-amber-900">
+                                  {contextNote}
+                                </p>
+                              </div>
+                            )}
+                            {suggestion && (
+                              <div className="rounded-md bg-emerald-50 px-3 py-2">
+                                <p className="text-xs font-semibold text-emerald-600">
+                                  修改建议
+                                </p>
+                                <p className="mt-1 text-sm whitespace-pre-line text-emerald-900">
+                                  {suggestion}
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                       {err.keywords?.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
                           {err.keywords.map((k, j) => (
