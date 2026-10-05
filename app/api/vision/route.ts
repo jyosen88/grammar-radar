@@ -51,27 +51,38 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(DASHSCOPE_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: VL_MODEL,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image_url", image_url: { url: imageUrl } },
-              { type: "text", text: OCR_PROMPT },
-            ],
+    // 本机网络偶发抽风（曾出现 fetch failed），失败时自动重试一次
+    let res: Response | null = null;
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        res = await fetch(DASHSCOPE_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
           },
-        ],
-        temperature: 0.1,
-        stream: false,
-      }),
-    });
+          body: JSON.stringify({
+            model: VL_MODEL,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "image_url", image_url: { url: imageUrl } },
+                  { type: "text", text: OCR_PROMPT },
+                ],
+              },
+            ],
+            temperature: 0.1,
+            stream: false,
+          }),
+        });
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (!res) throw lastErr;
 
     if (!res.ok) {
       const detail = await res.text();
