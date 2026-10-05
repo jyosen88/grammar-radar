@@ -832,7 +832,7 @@ export default function Home() {
                   {busyHint || "处理中…"}
                 </>
               ) : (
-                <>📋 分析作文</>
+                <>📋 作文分析</>
               )}
             </button>
             <button
@@ -935,7 +935,7 @@ export default function Home() {
               )}
             </button>
             <span className="w-full text-xs text-slate-400 sm:w-auto">
-              「分析作文」需要先填①题目要求和②作文；其余按钮只需填②
+              「作文分析」需要先填①题目要求和②作文；其余按钮只需填②
             </span>
           </div>
 
