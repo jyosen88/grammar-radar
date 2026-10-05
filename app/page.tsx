@@ -55,6 +55,33 @@ interface EssayResult {
   errors: AnalysisError[];
 }
 
+/** 追问对话消息 */
+interface ChatMsg {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** /api/practice 返回的变式练习题 */
+interface PracticeExercise {
+  type: "choice" | "fill";
+  question: string;
+  options: string[];
+  answer: string;
+  explanation: string;
+}
+
+/** 单处错误的"我不懂"展开面板 */
+interface PracticePanel {
+  loading: boolean;
+  failed: boolean;
+  knowledgePoint: string;
+  cards: GrammarCard[];
+  exercises: PracticeExercise[];
+  picked: (string | null)[]; // 选择题每题已选选项
+  fillText: string[]; // 填空题每题输入
+  checked: boolean[]; // 每题是否已提交答案（提交后显示解析）
+}
+
 export default function Home() {
   // 输入与分析状态
   const [analysisText, setAnalysisText] = useState("");
@@ -75,6 +102,19 @@ export default function Home() {
   // 作文分析（两步流程）：①题目要求 ②作文
   const [topicText, setTopicText] = useState("");
   const [essayResult, setEssayResult] = useState<EssayResult | null>(null);
+  // 分析时的题目+作文快照，供追问使用（用户之后可能改了输入框）
+  const [essaySnapshot, setEssaySnapshot] = useState<{
+    topic: string;
+    essay: string;
+  } | null>(null);
+  // 作文追问对话
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  // 每处错误的练习面板，key 为错误在 errors 中的下标
+  const [practicePanels, setPracticePanels] = useState<
+    Record<number, PracticePanel>
+  >({});
   const [guide, setGuide] = useState<{
     steps: GuideStep[];
     topic: string;
@@ -100,6 +140,10 @@ export default function Home() {
     setGuide(null);
     setPolish(null);
     setEssayResult(null);
+    setEssaySnapshot(null);
+    setChatMessages([]);
+    setChatInput("");
+    setPracticePanels({});
     setGIdx(0);
     setGChosen([]);
     setGFirstCorrect([]);
@@ -301,6 +345,193 @@ export default function Home() {
       );
     }
     setMode("essay");
+    setEssaySnapshot({ topic, essay });
+  }
+
+  /** 把已有作文分析结果拼成纯文本，作为追问时的上下文 */
+  function buildAnalysisContext(r: EssayResult): string {
+    const lines = [
+      `扣题判断：${r.onTopic ? "切题" : "偏题"}。${r.onTopicComment}`,
+      r.structure ? `结构评价：${r.structure}` : "",
+      r.language ? `语言评价：${r.language}` : "",
+      r.errors.length
+        ? "语法错误：\n" +
+          r.errors
+            .map(
+              (e, i) =>
+                `${i + 1}. ${e.original} → ${e.corrected}（${
+                  e.reason ?? ""
+                }）`
+            )
+            .join("\n")
+        : "",
+    ];
+    return lines.filter(Boolean).join("\n\n");
+  }
+
+  /** 作文追问 */
+  async function handleFollowup() {
+    const question = chatInput.trim();
+    if (chatBusy || !question || !essayResult || !essaySnapshot) return;
+    const history = chatMessages;
+    setChatMessages((m) => [...m, { role: "user", content: question }]);
+    setChatInput("");
+    setChatBusy(true);
+    try {
+      const res = await fetch("/api/essay-followup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: essaySnapshot.topic,
+          essay: essaySnapshot.essay,
+          analysis: buildAnalysisContext(essayResult),
+          history,
+          question,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "追问失败，请重试");
+      setChatMessages((m) => [
+        ...m,
+        { role: "assistant", content: String(data.answer ?? "") },
+      ]);
+    } catch (e) {
+      // 失败时把用户消息保留，追加错误提示，方便直接重发
+      setChatMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `⚠️ ${e instanceof Error ? e.message : "追问失败，请重试"}`,
+        },
+      ]);
+    } finally {
+      setChatBusy(false);
+    }
+  }
+
+  /** 点"这个知识点我不懂"：关键词搜卡 + AI 生成变式练习，两路并行 */
+  async function handleExplainError(idx: number) {
+    if (!essayResult) return;
+    const err = essayResult.errors[idx];
+    if (!err) return;
+    const existing = practicePanels[idx];
+    // 已成功加载（有练习题）则展开/收起切换；失败面板点击则重新请求
+    if (existing && !existing.loading && existing.exercises.length > 0) {
+      setPracticePanels((p) => {
+        const next = { ...p };
+        delete next[idx];
+        return next;
+      });
+      return;
+    }
+    const keyword = (err.keywords ?? []).join("、");
+    setPracticePanels((p) => ({
+      ...p,
+      [idx]: {
+        loading: true,
+        failed: false,
+        knowledgePoint: keyword,
+        cards: [],
+        exercises: [],
+        picked: [],
+        fillText: [],
+        checked: [],
+      },
+    }));
+
+    // ① 用错误关键词走 RPC 搜卡（与 /quiz 降级同一函数）
+    const cardPromise: Promise<GrammarCard[]> = (async () => {
+      try {
+        const { data, error } = await getSupabase()
+          .rpc("search_grammar_cards", {
+            p_keywords: (err.keywords ?? []).slice(0, 4),
+            p_limit: 2,
+          });
+        return error ? [] : ((data as GrammarCard[] | null) ?? []);
+      } catch {
+        return [];
+      }
+    })();
+
+    // ② AI 生成变式练习题
+    const practicePromise = fetch("/api/practice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        keyword,
+        original: err.original,
+        corrected: err.corrected,
+        reason: err.reason ?? err.explanation ?? "",
+      }),
+    }).then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "生成练习题失败");
+      return {
+        knowledgePoint: String(data?.knowledge_point ?? keyword),
+        exercises: (Array.isArray(data?.exercises)
+          ? data.exercises
+          : []) as PracticeExercise[],
+      };
+    });
+
+    try {
+      const [cards, practice] = await Promise.all([cardPromise, practicePromise]);
+      setPracticePanels((p) => ({
+        ...p,
+        [idx]: {
+          loading: false,
+          failed: false,
+          knowledgePoint: practice.knowledgePoint,
+          cards,
+          exercises: practice.exercises,
+          picked: practice.exercises.map(() => null),
+          fillText: practice.exercises.map(() => ""),
+          checked: practice.exercises.map(() => false),
+        },
+      }));
+    } catch {
+      // 卡片可能已拿到，单独保留；练习题失败时给重试提示
+      const cards = await cardPromise;
+      setPracticePanels((p) => ({
+        ...p,
+        [idx]: {
+          loading: false,
+          failed: true,
+          knowledgePoint: keyword,
+          cards,
+          exercises: [],
+          picked: [],
+          fillText: [],
+          checked: [],
+        },
+      }));
+    }
+  }
+
+  /** 更新某处错误面板里某道题的作答状态 */
+  function updatePanelExercise(
+    errIdx: number,
+    exIdx: number,
+    patch: Partial<{
+      picked: string | null;
+      fillText: string;
+      checked: boolean;
+    }>
+  ) {
+    setPracticePanels((p) => {
+      const panel = p[errIdx];
+      if (!panel) return p;
+      const next: PracticePanel = {
+        ...panel,
+        picked: [...panel.picked],
+        fillText: [...panel.fillText],
+        checked: [...panel.checked],
+      };
+      if (patch.picked !== undefined) next.picked[exIdx] = patch.picked;
+      if (patch.fillText !== undefined) next.fillText[exIdx] = patch.fillText;
+      if (patch.checked !== undefined) next.checked[exIdx] = patch.checked;
+      return { ...p, [errIdx]: next };
+    });
   }
 
   /** 文本框润色作文 */
@@ -753,6 +984,38 @@ export default function Home() {
                           ))}
                         </div>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => handleExplainError(i)}
+                        disabled={practicePanels[i]?.loading}
+                        className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
+                      >
+                        {practicePanels[i]?.loading
+                          ? "正在准备讲解和练习…"
+                          : practicePanels[i]
+                            ? "收起知识点讲解"
+                            : "💡 这个知识点我不懂"}
+                      </button>
+
+                      {/* 知识点卡片 + 变式练习 */}
+                      {practicePanels[i] && (
+                        <PracticeArea
+                          panel={practicePanels[i]}
+                          onPick={(exIdx, opt) =>
+                            updatePanelExercise(i, exIdx, {
+                              picked: opt,
+                              checked: true,
+                            })
+                          }
+                          onFill={(exIdx, text) =>
+                            updatePanelExercise(i, exIdx, { fillText: text })
+                          }
+                          onCheckFill={(exIdx) =>
+                            updatePanelExercise(i, exIdx, { checked: true })
+                          }
+                          onRetry={() => handleExplainError(i)}
+                        />
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -775,6 +1038,72 @@ export default function Home() {
                   卡片库中没有匹配到相关知识点
                 </p>
               )}
+            </div>
+
+            {/* 追问对话框 */}
+            <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900">
+                💬 对批改结果有疑问？继续问老师
+              </h3>
+
+              {chatMessages.length === 0 && (
+                <p className="text-xs text-slate-400">
+                  例如：这里为什么要用一般现在时？besides 和 except 有什么区别？
+                </p>
+              )}
+
+              {chatMessages.length > 0 && (
+                <ul className="max-h-80 space-y-3 overflow-y-auto pr-1">
+                  {chatMessages.map((m, i) => (
+                    <li
+                      key={i}
+                      className={`flex ${
+                        m.role === "user" ? "justify-end" : "justify-start"
+                      }`}
+                    >
+                      <div
+                        className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm leading-6 ${
+                          m.role === "user"
+                            ? "bg-violet-600 text-white"
+                            : "border border-slate-200 bg-slate-50 text-slate-800"
+                        }`}
+                      >
+                        {m.content}
+                      </div>
+                    </li>
+                  ))}
+                  {chatBusy && (
+                    <li className="flex justify-start">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm text-slate-400">
+                        老师正在思考…
+                      </div>
+                    </li>
+                  )}
+                </ul>
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleFollowup();
+                    }
+                  }}
+                  placeholder="输入你的问题，回车发送"
+                  className="flex-1 rounded-xl border border-slate-300 px-3.5 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-200"
+                />
+                <button
+                  type="button"
+                  onClick={handleFollowup}
+                  disabled={chatBusy || !chatInput.trim()}
+                  className="shrink-0 rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  发送
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1131,6 +1460,162 @@ export default function Home() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+/** 作文批改中"这个知识点我不懂"展开的讲解 + 练习区 */
+function PracticeArea(props: {
+  panel: PracticePanel;
+  onPick: (exIdx: number, opt: string) => void;
+  onFill: (exIdx: number, text: string) => void;
+  onCheckFill: (exIdx: number) => void;
+  onRetry: () => void;
+}) {
+  const { panel, onPick, onFill, onCheckFill, onRetry } = props;
+
+  if (panel.loading) {
+    return (
+      <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-600">
+        正在匹配知识点卡片、生成针对性练习…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+      {/* 关键词匹配到的知识点卡片 */}
+      {panel.cards.length > 0 ? (
+        panel.cards.map((card, i) => (
+          <Card key={card.id ?? `${card.card_code}-${i}`} card={card} />
+        ))
+      ) : (
+        !panel.failed && (
+          <p className="text-xs text-slate-400">
+            卡片库中暂时没有直接对应的知识点卡片，先做下面的练习吧
+          </p>
+        )
+      )}
+
+      {panel.failed ? (
+        <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+          <span className="text-xs text-red-700">
+            针对性练习生成失败（不影响上面的知识点卡片）
+          </span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="rounded-lg bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700"
+          >
+            重试
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
+          <p className="text-xs font-semibold text-violet-700">
+            🎯 针对性变式练习 · {panel.knowledgePoint}
+          </p>
+          {panel.exercises.map((ex, j) => {
+            const checked = panel.checked[j];
+            const picked = panel.picked[j] ?? null;
+            const fillVal = panel.fillText[j] ?? "";
+            const fillCorrect =
+              fillVal.trim().toLowerCase() === ex.answer.trim().toLowerCase();
+            return (
+              <div key={j} className="space-y-2 border-t border-slate-100 pt-3 first:border-t-0 first:pt-0">
+                <p className="text-sm font-medium text-slate-800">
+                  {j + 1}. {ex.question}
+                </p>
+
+                {ex.type === "choice" ? (
+                  <div className="space-y-1.5">
+                    {ex.options.map((opt, k) => {
+                      const isAnswer = opt === ex.answer;
+                      const isPicked = picked === opt;
+                      let cls =
+                        "border-slate-200 bg-white text-slate-700 hover:border-violet-400 hover:bg-violet-50";
+                      if (checked) {
+                        if (isAnswer)
+                          cls = "border-emerald-500 bg-emerald-50 text-emerald-800";
+                        else if (isPicked)
+                          cls = "border-red-400 bg-red-50 text-red-700";
+                        else cls = "border-slate-200 bg-white text-slate-400";
+                      }
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          disabled={checked}
+                          onClick={() => onPick(j, opt)}
+                          className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition disabled:cursor-default ${cls}`}
+                        >
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current text-xs font-semibold opacity-70">
+                            {String.fromCharCode(65 + k)}
+                          </span>
+                          <span className="flex-1">{opt}</span>
+                          {checked && isAnswer && <span>✅</span>}
+                          {checked && !isAnswer && isPicked && <span>❌</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={fillVal}
+                      disabled={checked}
+                      onChange={(e) => onFill(j, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && fillVal.trim())
+                          onCheckFill(j);
+                      }}
+                      placeholder="填入英文答案"
+                      className="w-48 rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-200 disabled:bg-slate-50"
+                    />
+                    {!checked && (
+                      <button
+                        type="button"
+                        disabled={!fillVal.trim()}
+                        onClick={() => onCheckFill(j)}
+                        className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 disabled:opacity-60"
+                      >
+                        提交
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {checked && (
+                  <div
+                    className={`rounded-lg px-3 py-2 text-xs leading-relaxed ${
+                      ex.type === "choice"
+                        ? picked === ex.answer
+                          ? "bg-emerald-50 text-emerald-800"
+                          : "bg-red-50 text-red-800"
+                        : fillCorrect
+                          ? "bg-emerald-50 text-emerald-800"
+                          : "bg-red-50 text-red-800"
+                    }`}
+                  >
+                    {ex.type === "choice"
+                      ? picked === ex.answer
+                        ? "✅ 答对了！"
+                        : `❌ 正确答案是「${ex.answer}」。`
+                      : fillCorrect
+                        ? "✅ 答对了！"
+                        : `❌ 正确答案是「${ex.answer}」。`}
+                    {ex.explanation && (
+                      <span className="mt-0.5 block text-slate-700">
+                        💡 {ex.explanation}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
