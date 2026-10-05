@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeExercises, parseLooseJson, type Exercise } from "@/lib/exercise";
 
-const SYSTEM_PROMPT = `你是一名中学英语老师。学生在作文里犯了一个具体的语法错误，请围绕这个错误对应的"细化知识点"，为学生生成 1-3 道变式练习题，帮助他通过练习掌握。
+const buildSystemPrompt = (count: number) => `你是一名中学英语老师。学生在作文或句子里犯了一个具体的语法错误，请围绕这个错误对应的"细化知识点"，为学生生成 ${count} 道变式练习题，帮助他通过练习掌握。
 
 出题要求：
 1. 题目必须严格考同一个细化知识点（例如知识点是"主谓一致 - 就近一致"，就不要出成普通主谓一致或时态题），但句子、场景要换，不能照抄学生原句
@@ -10,6 +10,7 @@ const SYSTEM_PROMPT = `你是一名中学英语老师。学生在作文里犯了
 4. 每题必须给出正确答案和一句简短解析（讲清为什么，中文）
 5. 不要在题干或解析中暴露学生的错误句子，让学生独立做
 6. 如果提供了"已经出过的题目"，新题目绝对不能与它们重复，场景和句式都要换新的
+7. 必须恰好生成 ${count} 道题（选择题和填空题可以混用），不多不少
 
 严格按照以下 JSON 格式返回，不要输出任何其他内容：
 {
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
   let corrected = "";
   let reason = "";
   let exclude: unknown = [];
+  let count = 3;
   try {
     const body = await req.json();
     knowledgePoint =
@@ -47,6 +49,9 @@ export async function POST(req: NextRequest) {
     corrected = typeof body?.corrected === "string" ? body.corrected : "";
     reason = typeof body?.reason === "string" ? body.reason : "";
     exclude = Array.isArray(body?.exclude) ? body.exclude : [];
+    if (typeof body?.count === "number" && Number.isFinite(body.count)) {
+      count = Math.min(5, Math.max(1, Math.round(body.count)));
+    }
   } catch {
     return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
   }
@@ -73,7 +78,7 @@ ${
         .join("\n")}\n`
     : ""
 }
-请生成 1-3 道变式练习题。`;
+请恰好生成 ${count} 道变式练习题。`;
 
   try {
     const res = await fetch("https://api.deepseek.com/chat/completions", {
@@ -85,12 +90,12 @@ ${
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: buildSystemPrompt(count) },
           { role: "user", content: userContent },
         ],
         response_format: { type: "json_object" },
         temperature: 0.7, // 练习题需要一定变化
-        max_tokens: 2000,
+        max_tokens: 2500,
         stream: false,
       }),
     });
@@ -110,7 +115,7 @@ ${
       exercises?: unknown;
     };
 
-    const exercises: Exercise[] = normalizeExercises(parsed?.exercises, 3);
+    const exercises: Exercise[] = normalizeExercises(parsed?.exercises, count);
     if (exercises.length === 0) {
       return NextResponse.json(
         { error: "AI 没有生成有效的练习题，请重试" },

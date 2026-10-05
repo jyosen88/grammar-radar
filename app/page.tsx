@@ -118,6 +118,12 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
+  // 单题分析时的原文快照，供追问使用（用户之后可能改了输入框）
+  const [analyzeSnapshot, setAnalyzeSnapshot] = useState<string | null>(null);
+  // 单题分析追问对话
+  const [aChatMessages, setAChatMessages] = useState<ChatMsg[]>([]);
+  const [aChatInput, setAChatInput] = useState("");
+  const [aChatBusy, setAChatBusy] = useState(false);
   // 每处错误的练习面板，key 为错误在 errors 中的下标
   const [practicePanels, setPracticePanels] = useState<
     Record<number, PracticePanel>
@@ -143,6 +149,9 @@ export default function Home() {
     setAnalysisError(null);
     setAnalysisErrors(null);
     setAnalyzePanels({});
+    setAnalyzeSnapshot(null);
+    setAChatMessages([]);
+    setAChatInput("");
     setMode(null);
     setGuide(null);
     setEssayResult(null);
@@ -173,6 +182,9 @@ export default function Home() {
       : [];
     setAnalysisErrors(errors);
     setAnalyzePanels({});
+    setAnalyzeSnapshot(text);
+    setAChatMessages([]);
+    setAChatInput("");
     setMode("analyze");
   }
 
@@ -591,7 +603,7 @@ export default function Home() {
     }
   }
 
-  /** "生成（更多）练习题"：首次生成 1-3 道，之后追加并排除已出题 */
+  /** "举一反三练习 / 生成更多练习题"：每次固定生成 3 道，追加并排除已出题 */
   async function handleAnalyzeExercises(idx: number) {
     if (!analysisErrors) return;
     const err = analysisErrors[idx];
@@ -626,6 +638,7 @@ export default function Home() {
               .filter(Boolean)
               .join("\n修改建议：") || "",
           exclude: existed.map((ex) => ex.question),
+          count: 3,
         }),
       });
       const data = await res.json();
@@ -661,6 +674,71 @@ export default function Home() {
             }
           : p
       );
+    }
+  }
+
+  /** 把单题分析结果拼成纯文本，作为追问时的上下文 */
+  function buildAnalyzeContext(errors: AnalysisError[]): string {
+    if (errors.length === 0) return "AI 判定该句子没有明显语法错误。";
+    return "发现的语法错误：\n" +
+      errors
+        .map((e, i) => {
+          const parts = [
+            `${i + 1}. ${e.original} → ${e.corrected}`,
+            e.knowledge_point ? `知识点：${e.knowledge_point}` : "",
+            e.reason || e.explanation
+              ? `错误原因：${e.reason ?? e.explanation}`
+              : "",
+            e.context_note ? `语境解释：${e.context_note}` : "",
+            e.suggestion ? `修改建议：${e.suggestion}` : "",
+          ];
+          return parts.filter(Boolean).join("\n");
+        })
+        .join("\n\n");
+  }
+
+  /** 单题分析追问 */
+  async function handleAnalyzeFollowup() {
+    const question = aChatInput.trim();
+    if (
+      aChatBusy ||
+      !question ||
+      !analysisErrors ||
+      analyzeSnapshot === null
+    )
+      return;
+    const history = aChatMessages;
+    setAChatMessages((m) => [...m, { role: "user", content: question }]);
+    setAChatInput("");
+    setAChatBusy(true);
+    try {
+      const res = await fetch("/api/analyze-followup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: analyzeSnapshot,
+          analysis: buildAnalyzeContext(analysisErrors),
+          history,
+          question,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "追问失败，请重试");
+      setAChatMessages((m) => [
+        ...m,
+        { role: "assistant", content: String(data.answer ?? "") },
+      ]);
+    } catch (e) {
+      // 失败时保留用户消息，追加错误提示，方便直接重发
+      setAChatMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `⚠️ ${e instanceof Error ? e.message : "追问失败，请重试"}`,
+        },
+      ]);
+    } finally {
+      setAChatBusy(false);
     }
   }
 
@@ -1230,6 +1308,11 @@ export default function Home() {
                     const contextNote = (err.context_note ?? "").trim();
                     const suggestion = (err.suggestion ?? "").trim();
                     const panel = analyzePanels[i];
+                    const aExercises = panel?.exercises ?? [];
+                    // 当前批次全部作答后，才允许生成下一批
+                    const allChecked =
+                      aExercises.length > 0 &&
+                      aExercises.every((_, j) => panel?.checked[j]);
                     return (
                     <li
                       key={i}
@@ -1296,14 +1379,19 @@ export default function Home() {
                                 : "📖 更多知识点讲解"
                               : "📖 更多知识点讲解"}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAnalyzeExercises(i)}
-                          disabled={panel?.exBusy}
-                          className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
-                        >
-                          {panel?.exBusy ? "正在生成练习题…" : "🔄 生成更多练习题"}
-                        </button>
+                        {/* 还没有题目时显示"举一反三练习"；题目生成后这个按钮移到练习区底部 */}
+                        {aExercises.length === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleAnalyzeExercises(i)}
+                            disabled={panel?.exBusy}
+                            className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
+                          >
+                            {panel?.exBusy
+                              ? "正在生成 3 道练习题…"
+                              : "🎯 举一反三练习"}
+                          </button>
+                        )}
                       </div>
 
                       {panel?.explainError && (
@@ -1325,11 +1413,11 @@ export default function Home() {
                       {panel?.exError && (
                         <p className="text-xs text-red-600">⚠️ {panel.exError}</p>
                       )}
-                      {panel && panel.exercises.length > 0 && (
-                        <div className="space-y-4 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+                      {panel && aExercises.length > 0 && (
+                        <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
                           <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
                             <ExerciseList
-                              exercises={panel.exercises}
+                              exercises={aExercises}
                               state={panel}
                               onPick={(exIdx, opt) =>
                                 updateAnalyzeExercise(i, exIdx, {
@@ -1344,6 +1432,53 @@ export default function Home() {
                                 updateAnalyzeExercise(i, exIdx, { checked: true })
                               }
                             />
+
+                            {/* 当前题目全部做完后出现，再生成 3 道不重复的新题 */}
+                            {allChecked && (
+                              <div className="space-y-1.5 border-t border-slate-100 pt-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleAnalyzeExercises(i)}
+                                  disabled={panel.exBusy}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {panel.exBusy ? (
+                                    <>
+                                      <svg
+                                        className="h-3.5 w-3.5 animate-spin"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                      >
+                                        <circle
+                                          className="opacity-25"
+                                          cx="12"
+                                          cy="12"
+                                          r="10"
+                                          stroke="currentColor"
+                                          strokeWidth="4"
+                                        />
+                                        <path
+                                          className="opacity-75"
+                                          fill="currentColor"
+                                          d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                                        />
+                                      </svg>
+                                      正在生成 3 道新题…
+                                    </>
+                                  ) : (
+                                    "🔄 生成更多练习题"
+                                  )}
+                                </button>
+                                <p className="text-xs text-slate-400">
+                                  已出 {aExercises.length} 道，新题不会与已有题目重复
+                                </p>
+                                {panel.exError && (
+                                  <p className="text-xs text-red-600">
+                                    ⚠️ {panel.exError}
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
@@ -1353,6 +1488,74 @@ export default function Home() {
                 </ul>
               </>
             )}
+          </div>
+        )}
+
+        {/* 单题分析追问对话框 */}
+        {mode === "analyze" && analysisErrors && !busy && (
+          <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-900">
+              💬 对结果有疑问？继续问老师
+            </h3>
+
+            {aChatMessages.length === 0 && (
+              <p className="text-xs text-slate-400">
+                例如：这里为什么要用 was 不用 were？every 和 each 到底有什么区别？
+              </p>
+            )}
+
+            {aChatMessages.length > 0 && (
+              <ul className="max-h-80 space-y-3 overflow-y-auto pr-1">
+                {aChatMessages.map((m, i) => (
+                  <li
+                    key={i}
+                    className={`flex ${
+                      m.role === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    <div
+                      className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm leading-6 ${
+                        m.role === "user"
+                          ? "bg-violet-600 text-white"
+                          : "border border-slate-200 bg-slate-50 text-slate-800"
+                      }`}
+                    >
+                      {m.content}
+                    </div>
+                  </li>
+                ))}
+                {aChatBusy && (
+                  <li className="flex justify-start">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm text-slate-400">
+                      老师正在思考…
+                    </div>
+                  </li>
+                )}
+              </ul>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                value={aChatInput}
+                onChange={(e) => setAChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleAnalyzeFollowup();
+                  }
+                }}
+                placeholder="输入你的问题，回车发送"
+                className="flex-1 rounded-xl border border-slate-300 px-3.5 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-200"
+              />
+              <button
+                type="button"
+                onClick={handleAnalyzeFollowup}
+                disabled={aChatBusy || !aChatInput.trim()}
+                className="shrink-0 rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                发送
+              </button>
+            </div>
           </div>
         )}
 
