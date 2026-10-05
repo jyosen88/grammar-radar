@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCardCatalog, validateCardCodes } from "@/lib/card-catalog";
+import { normalizeExercises, parseLooseJson } from "@/lib/exercise";
 
 const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用户会给你两样东西：①作文的题目要求（可能包含题目、词数要求、内容要点等）；②学生写的作文。
 
@@ -8,38 +8,82 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
 1.【扣题判断】：对照题目要求，判断作文是否切题。检查：主题是否一致、题目列出的内容要点是否都有覆盖、词数是否明显不达标（如果题目给了词数要求）。
 2.【结构评价】：判断作文结构是否合理：开头/主体/结尾是否完整、段落划分是否清晰、句子之间是否有基本衔接（first/also/finally 等）。
 3.【语言准确性】：总体评价用词、时态、句式的准确性和丰富度。
-4.【逐处语法错误】：找出作文中所有语法错误，逐条列出并给出修改建议。检查范围：主谓一致、名词可数/不可数与单复数、动词时态语态、介词搭配、冠词、从句结构、代词、拼写等。判定标准以中国中考、高考英语语法为基础，硬性考点一律判错，严禁以"口语中常见"为由放过。
+4.【逐处语法错误】：找出作文中所有语法错误。判定标准以中国中考、高考英语语法为基础，硬性考点一律判错，严禁以"口语中常见"为由放过。
+
+每处错误必须做到四件事：
+① 给出细化到二级/三级的知识点名称（knowledge_point），格式为"大类 - 小类"，必要时"大类 - 小类 - 特殊情形"。严禁只给大类。参照下表细化（表外的知识点也按同样粒度命名）：
+- 主谓一致 - 语法一致
+- 主谓一致 - 意义一致（集合名词 family/audience/team 等按语义决定单复数）
+- 主谓一致 - 就近一致（either...or / neither...nor / not only...but also / there be）
+- 主谓一致 - 不定代词作主语（each/every/someone/nobody 等）
+- 主谓一致 - 分数/百分数作主语
+- 主谓一致 - the number of vs a number of
+- 主谓一致 - 主语后接 with/together with/as well as
+- 非谓语动词 - 动名词作宾语（enjoy/finish/mind/practice + doing）
+- 非谓语动词 - 不定式作宾语（want/decide/hope + to do）
+- 非谓语动词 - 使役/感官动词（make/let/have/see/hear + do/doing）
+- 非谓语动词 - 分词作定语/状语
+- 名词 - 可数与不可数
+- 名词 - 名词作定语的单复数（man/woman 变复数）
+- 名词 - 所有格（'s 与 of）
+- 名词 - 恒复数名词（police/cattle/people）
+- 冠词 - 不定冠词 a/an
+- 冠词 - 定冠词 the（乐器/序数词/特指）
+- 冠词 - 零冠词（三餐/球类/学科）
+- 代词 - 人称代词主格宾格
+- 代词 - 物主代词/反身代词
+- 代词 - 指示代词/不定代词
+- 时态 - 一般现在时 / 现在进行时 / 一般过去时 / 现在完成时 / 过去进行时 / 过去完成时 / 一般将来时
+- 被动语态
+- 介词 - 固定搭配（listen to / interested in 等）
+- 形容词与副词 - 比较级/最高级、系动词后接形容词
+- 从句 - 定语从句（who/which/that/whose/关系副词）
+- 从句 - 宾语从句（语序/引导词）
+- 从句 - 状语从句（时间/条件/让步）
+- 连词与逻辑衔接 / 词性混用 / 拼写
+
+② 三段讲解，各司其职、内容不重复：
+- reason（错误原因）：明确指出错在哪里，说明学生为什么容易犯这个错；
+- context_note（语境/搭配解释）：只在涉及语境或固定搭配时填写，讲清用法并给"错误写法 vs 正确写法"的对比例句；单纯规则错误返回空字符串 ""；
+- suggestion（修改建议）：这一处具体怎么改、以后遇到同类情况用什么方法判断，可给一个简短的同类正确例句。
+
+③ 现场出 2 道针对性练习题（exercises）：与该错误考同一个细化知识点，但换场景换句式、不照抄原句；中考难度；单项选择题（选项 2-4 个）或填空题（空格用 ____）；每题给正确答案和一句中文解析；不要在题干或解析中暴露学生的错误句子。
 
 严格按照以下 JSON 格式返回，不要输出任何其他内容：
 {
   "on_topic": {
     "is_on_topic": true 或 false,
-    "comment": "扣题情况说明：切题就简述作文如何覆盖了题目要点；偏题就明确指出哪里偏离了题目要求"
+    "comment": "扣题情况说明"
   },
-  "structure": "结构评价：1-3 句话，指出结构上的优点和不足",
-  "language": "语言评价：1-3 句话，指出用词/时态/句式上的整体表现",
+  "structure": "结构评价：1-3 句话",
+  "language": "语言评价：1-3 句话",
   "errors": [
     {
       "original": "出错的原文片段",
       "corrected": "修改后的正确写法",
+      "knowledge_point": "主谓一致 - 就近一致",
       "reason": "错误原因",
-      "context_note": "语境/搭配解释",
+      "context_note": "语境/搭配解释，或空字符串",
       "suggestion": "修改建议",
-      "keywords": ["对应的语法知识点关键词"]
+      "exercises": [
+        {
+          "type": "choice 或 fill",
+          "question": "英文题目（填空题用 ____ 表示空格）",
+          "options": ["选项1", "选项2", "选项3", "选项4"],
+          "answer": "选择题给与 options 中完全一致的选项文本；填空题给要填入的英文",
+          "explanation": "一句中文简短解析"
+        }
+      ]
     }
   ]
 }
 
 规则：
-1. errors 必须包含全部语法错误；如果确实没有语法错误，errors 返回空数组 []
+1. errors 必须包含全部语法错误；确实没有语法错误时返回空数组 []
 2. original 必须是作文原文中出现的片段，不要改写
 3. 同一个片段有多个错误时分开逐条列出
-4. 每处错误的三个说明字段必须各司其职、内容不重复，按此顺序理解：
-   ① reason（错误原因）：明确指出错在哪里，并说明学生为什么容易犯这个错；
-   ② context_note（语境/搭配解释）：只在涉及语境或固定搭配时填写，讲清这个词/结构在句子里的用法，并给出"错误写法 vs 正确写法"的对比例句；如果只是单纯的规则错误，返回空字符串 ""；
-   ③ suggestion（修改建议）：告诉学生这一处具体怎么改、以后遇到同类情况用什么方法判断（可给一个简短的同类正确例句）。
-5. keywords 使用简短的中文语法术语（例如：主谓一致、可数名词复数、时态、冠词），每个错误 1-3 个
-6. 全部说明文字用中文，original/corrected 保持英文`;
+4. 每处错误的 exercises 固定给 2 道题
+5. 全部说明文字用中文，original/corrected/题目/选项/答案保持英文`;
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -50,8 +94,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let topic: string;
-  let essay: string;
+  let topic = "";
+  let essay = "";
   try {
     const body = await req.json();
     topic = typeof body?.topic === "string" ? body.topic : "";
@@ -67,31 +111,6 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const catalog = await getCardCatalog();
-    const promptWithCatalog = `${SYSTEM_PROMPT}
-
-【知识点卡片目录】
-以下是知识库中所有可用的知识点卡片（编号 + 标题）：
-${catalog.promptList}
-
-分析完错误后，你必须从上面的目录中挑选与本次发现的错误最匹配的 1-3 个卡片编号，放入 JSON 的 matched_card_codes 字段（如 ["N-006","M-002"]）。只允许选择目录中真实存在的编号，禁止编造；确实没有匹配的知识点时才返回空数组。
-
-选卡规则：
-① 每个错误的 keywords 与所选卡片标题必须属于同一语法类别，禁止跨类选卡；
-② 强制类别映射——当错误涉及以下类别时，matched_card_codes 中必须包含对应前缀的卡片：
-   - 冠词错误 → 必须选 A-xxx 冠词卡片；
-   - 代词错误 → 必须选 P-xxx 代词卡片；
-   - 名词错误 → 必须选 N-xxx 名词卡片；
-   - 主谓一致错误 → 必须选 M-xxx 主谓一致卡片。
-③ 若作文同时存在多个类别的错误，必须每个类别都选出对应卡片，不能只选一类。最终返回的 JSON 结构：
-{
-  "on_topic": { "is_on_topic": true, "comment": "..." },
-  "structure": "...",
-  "language": "...",
-  "errors": [...],
-  "matched_card_codes": ["..."]
-}`;
-
     const userContent = `【题目要求】\n${topic.slice(0, 1000)}\n\n【学生作文】\n${essay.slice(0, 4000)}`;
 
     const res = await fetch("https://api.deepseek.com/chat/completions", {
@@ -103,12 +122,12 @@ ${catalog.promptList}
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: [
-          { role: "system", content: promptWithCatalog },
+          { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userContent },
         ],
         response_format: { type: "json_object" },
         temperature: 0,
-        max_tokens: 4000,
+        max_tokens: 8000, // 每处错误自带 2 道题，需要较大输出空间
         stream: false,
       }),
     });
@@ -123,29 +142,43 @@ ${catalog.promptList}
 
     const data = await res.json();
     const content: string = data?.choices?.[0]?.message?.content ?? "";
-
-    let parsed: {
+    const parsed = parseLooseJson(content) as {
       on_topic?: unknown;
       structure?: unknown;
       language?: unknown;
       errors?: unknown;
-      matched_card_codes?: unknown;
     };
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      const m = content.match(/\{[\s\S]*\}/);
-      if (!m) throw new Error("AI 返回内容无法解析为 JSON");
-      parsed = JSON.parse(m[0]);
-    }
 
-    const errors = Array.isArray(parsed?.errors) ? parsed.errors : [];
-    const matchedCardCodes = validateCardCodes(
-      parsed?.matched_card_codes,
-      catalog.codes
-    );
+    // 逐错误清洗：讲解字段 + 练习题都做兜底，防止 AI 脏数据搞崩前端
+    const rawErrors = Array.isArray(parsed?.errors)
+      ? (parsed.errors as Record<string, unknown>[])
+      : [];
+    const errors = rawErrors
+      .map((raw) => {
+        const original =
+          typeof raw.original === "string" ? raw.original.trim() : "";
+        const corrected =
+          typeof raw.corrected === "string" ? raw.corrected.trim() : "";
+        if (!original || !corrected) return null;
+        return {
+          original,
+          corrected,
+          knowledge_point:
+            typeof raw.knowledge_point === "string"
+              ? raw.knowledge_point.trim()
+              : "",
+          reason: typeof raw.reason === "string" ? raw.reason.trim() : "",
+          context_note:
+            typeof raw.context_note === "string"
+              ? raw.context_note.trim()
+              : "",
+          suggestion:
+            typeof raw.suggestion === "string" ? raw.suggestion.trim() : "",
+          exercises: normalizeExercises(raw.exercises, 2),
+        };
+      })
+      .filter((e): e is NonNullable<typeof e> => e !== null);
 
-    // 逐字段清洗，防止 AI 脏数据
     const rawOnTopic = (parsed?.on_topic ?? {}) as Record<string, unknown>;
     return NextResponse.json({
       on_topic: {
@@ -156,7 +189,6 @@ ${catalog.promptList}
       structure: typeof parsed?.structure === "string" ? parsed.structure : "",
       language: typeof parsed?.language === "string" ? parsed.language : "",
       errors,
-      matched_card_codes: matchedCardCodes,
     });
   } catch (e) {
     return NextResponse.json(

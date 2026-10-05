@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { getSupabase, type GrammarCard } from "@/lib/supabase";
 import { Card } from "@/components/GrammarCardView";
 import { SiteNav } from "@/components/SiteNav";
+import type { Exercise } from "@/lib/exercise";
 
 /** AI 分析返回的单个语法错误 */
 interface AnalysisError {
@@ -13,7 +14,9 @@ interface AnalysisError {
   explanation?: string; // 兼容旧字段
   context_note?: string; // 语境/搭配解释，可为空
   suggestion?: string; // 修改建议（作文分析使用）
-  keywords: string[];
+  knowledge_point?: string; // 细化知识点（作文分析使用，如"主谓一致 - 就近一致"）
+  exercises?: Exercise[]; // 作文分析现场生成的针对性练习
+  keywords?: string[]; // 智能语法分析使用
 }
 
 /** 已上传的错题图片（Supabase Storage 公共 URL） */
@@ -48,27 +51,13 @@ interface ChatMsg {
   content: string;
 }
 
-/** /api/practice 返回的变式练习题 */
-interface PracticeExercise {
-  type: "choice" | "fill";
-  question: string;
-  options: string[];
-  answer: string;
-  explanation: string;
-}
-
-/** 单处错误的"我不懂"展开面板 */
+/** 作文分析中每处错误的练习题作答状态，key 为错误下标 */
 interface PracticePanel {
-  loading: boolean;
-  failed: boolean;
-  loadingMore: boolean; // "生成更多"请求中
-  moreError?: string; // "生成更多"失败提示
-  knowledgePoint: string;
-  cards: GrammarCard[];
-  exercises: PracticeExercise[];
   picked: (string | null)[]; // 选择题每题已选选项
   fillText: string[]; // 填空题每题输入
   checked: boolean[]; // 每题是否已提交答案（提交后显示解析）
+  loadingMore: boolean; // "生成更多"请求中
+  moreError?: string; // "生成更多"失败提示
 }
 
 export default function Home() {
@@ -271,9 +260,9 @@ export default function Home() {
     }
   }
 
-  /** 调用 /api/essay：题目要求 + 作文一起分析，并匹配知识点卡片 */
+  /** 调用 /api/essay：题目+作文分析，每处错误自带细化知识点、三段讲解和练习题 */
   async function runEssay(topic: string, essay: string) {
-    setBusyHint("AI 正在批改作文…");
+    setBusyHint("AI 正在批改作文并生成针对性练习…");
     const res = await fetch("/api/essay", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -282,6 +271,9 @@ export default function Home() {
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error ?? "作文分析失败，请重试");
 
+    const errors: AnalysisError[] = Array.isArray(data?.errors)
+      ? data.errors
+      : [];
     setEssayResult({
       onTopic: data?.on_topic?.is_on_topic !== false,
       onTopicComment:
@@ -290,26 +282,23 @@ export default function Home() {
           : "",
       structure: typeof data?.structure === "string" ? data.structure : "",
       language: typeof data?.language === "string" ? data.language : "",
-      errors: Array.isArray(data?.errors) ? data.errors : [],
+      errors,
     });
 
-    // 与智能语法分析一致：AI 返回编号，前端 .in() 精确取卡
-    const codes: string[] = Array.isArray(data?.matched_card_codes)
-      ? data.matched_card_codes.filter((c: unknown) => typeof c === "string")
-      : [];
-    if (codes.length) {
-      const { data: matched, error: qErr } = await getSupabase()
-        .from("grammar_cards")
-        .select("*")
-        .in("card_code", codes);
-      if (qErr) throw qErr;
-      const byCode = new Map(
-        ((matched as GrammarCard[] | null) ?? []).map((c) => [c.card_code, c])
-      );
-      setCardMatches(
-        codes.map((c) => byCode.get(c)).filter((c): c is GrammarCard => !!c)
-      );
-    }
+    // 初始化每处错误的练习题作答状态
+    setPracticePanels(
+      Object.fromEntries(
+        errors.map((e, i) => [
+          i,
+          {
+            picked: (e.exercises ?? []).map(() => null),
+            fillText: (e.exercises ?? []).map(() => ""),
+            checked: (e.exercises ?? []).map(() => false),
+            loadingMore: false,
+          },
+        ])
+      )
+    );
     setMode("essay");
     setEssaySnapshot({ topic, essay });
   }
@@ -326,6 +315,7 @@ export default function Home() {
             .map((e, i) => {
               const parts = [
                 `${i + 1}. ${e.original} → ${e.corrected}`,
+                e.knowledge_point ? `知识点：${e.knowledge_point}` : "",
                 e.reason || e.explanation
                   ? `错误原因：${e.reason ?? e.explanation}`
                   : "",
@@ -380,118 +370,14 @@ export default function Home() {
     }
   }
 
-  /** 点"这个知识点我不懂"：关键词搜卡 + AI 生成变式练习，两路并行 */
-  async function handleExplainError(idx: number) {
-    if (!essayResult) return;
-    const err = essayResult.errors[idx];
-    if (!err) return;
-    const existing = practicePanels[idx];
-    // 已成功加载（有练习题）则展开/收起切换；失败面板点击则重新请求
-    if (existing && !existing.loading && existing.exercises.length > 0) {
-      setPracticePanels((p) => {
-        const next = { ...p };
-        delete next[idx];
-        return next;
-      });
-      return;
-    }
-    const keyword = (err.keywords ?? []).join("、");
-    setPracticePanels((p) => ({
-      ...p,
-      [idx]: {
-        loading: true,
-        failed: false,
-        loadingMore: false,
-        knowledgePoint: keyword,
-        cards: [],
-        exercises: [],
-        picked: [],
-        fillText: [],
-        checked: [],
-      },
-    }));
-
-    // ① 用错误关键词走 RPC 搜卡（与 /quiz 降级同一函数）
-    const cardPromise: Promise<GrammarCard[]> = (async () => {
-      try {
-        const { data, error } = await getSupabase()
-          .rpc("search_grammar_cards", {
-            p_keywords: (err.keywords ?? []).slice(0, 4),
-            p_limit: 2,
-          });
-        return error ? [] : ((data as GrammarCard[] | null) ?? []);
-      } catch {
-        return [];
-      }
-    })();
-
-    // ② AI 生成变式练习题
-    const practicePromise = fetch("/api/practice", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        keyword,
-        original: err.original,
-        corrected: err.corrected,
-        reason:
-          [err.reason ?? err.explanation, err.suggestion]
-            .filter(Boolean)
-            .join("\n修改建议：") || "",
-      }),
-    }).then(async (res) => {
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? "生成练习题失败");
-      return {
-        knowledgePoint: String(data?.knowledge_point ?? keyword),
-        exercises: (Array.isArray(data?.exercises)
-          ? data.exercises
-          : []) as PracticeExercise[],
-      };
-    });
-
-    try {
-      const [cards, practice] = await Promise.all([cardPromise, practicePromise]);
-      setPracticePanels((p) => ({
-        ...p,
-        [idx]: {
-          loading: false,
-          failed: false,
-          loadingMore: false,
-          knowledgePoint: practice.knowledgePoint,
-          cards,
-          exercises: practice.exercises,
-          picked: practice.exercises.map(() => null),
-          fillText: practice.exercises.map(() => ""),
-          checked: practice.exercises.map(() => false),
-        },
-      }));
-    } catch {
-      // 卡片可能已拿到，单独保留；练习题失败时给重试提示
-      const cards = await cardPromise;
-      setPracticePanels((p) => ({
-        ...p,
-        [idx]: {
-          loading: false,
-          failed: true,
-          loadingMore: false,
-          knowledgePoint: keyword,
-          cards,
-          exercises: [],
-          picked: [],
-          fillText: [],
-          checked: [],
-        },
-      }));
-    }
-  }
-
-  /** "生成更多练习题"：带上已出题列表，避免重复，追加到面板 */
+  /** "生成更多练习题"：按细化知识点追加新题，带上已出题列表避免重复 */
   async function loadMoreExercises(idx: number) {
     if (!essayResult) return;
     const err = essayResult.errors[idx];
     const panel = practicePanels[idx];
     if (!err || !panel || panel.loadingMore) return;
 
+    const existed = err.exercises ?? [];
     setPracticePanels((p) =>
       p[idx]
         ? { ...p, [idx]: { ...p[idx], loadingMore: true, moreError: undefined } }
@@ -502,22 +388,35 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          keyword: panel.knowledgePoint,
+          knowledge_point: err.knowledge_point ?? "",
           original: err.original,
           corrected: err.corrected,
           reason:
             [err.reason ?? err.explanation, err.suggestion]
               .filter(Boolean)
               .join("\n修改建议：") || "",
-          exclude: panel.exercises.map((ex) => ex.question),
+          exclude: existed.map((ex) => ex.question),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "生成练习题失败");
       const more = (Array.isArray(data?.exercises)
         ? data.exercises
-        : []) as PracticeExercise[];
+        : []) as Exercise[];
       if (more.length === 0) throw new Error("AI 没有生成新的练习题");
+
+      // 追加到该错误的题目列表
+      setEssayResult((r) => {
+        if (!r) return r;
+        const errors = [...r.errors];
+        errors[idx] = {
+          ...errors[idx],
+          knowledge_point:
+            String(data?.knowledge_point ?? "") || errors[idx].knowledge_point,
+          exercises: [...(errors[idx].exercises ?? []), ...more],
+        };
+        return { ...r, errors };
+      });
       setPracticePanels((p) => {
         const cur = p[idx];
         if (!cur) return p;
@@ -526,8 +425,6 @@ export default function Home() {
           [idx]: {
             ...cur,
             loadingMore: false,
-            knowledgePoint: String(data?.knowledge_point ?? cur.knowledgePoint),
-            exercises: [...cur.exercises, ...more],
             picked: [...cur.picked, ...more.map(() => null)],
             fillText: [...cur.fillText, ...more.map(() => "")],
             checked: [...cur.checked, ...more.map(() => false)],
@@ -996,34 +893,17 @@ export default function Home() {
                           </>
                         );
                       })()}
-                      {err.keywords?.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {err.keywords.map((k, j) => (
-                            <span
-                              key={j}
-                              className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700"
-                            >
-                              {k}
-                            </span>
-                          ))}
-                        </div>
+                      {err.knowledge_point && (
+                        <span className="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700">
+                          📌 {err.knowledge_point}
+                        </span>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => handleExplainError(i)}
-                        disabled={practicePanels[i]?.loading}
-                        className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
-                      >
-                        {practicePanels[i]?.loading
-                          ? "正在准备讲解和练习…"
-                          : practicePanels[i]
-                            ? "收起知识点讲解"
-                            : "💡 这个知识点我不懂"}
-                      </button>
 
-                      {/* 知识点卡片 + 变式练习 */}
-                      {practicePanels[i] && (
-                        <PracticeArea
+                      {/* 针对性练习：分析时已由 AI 现场生成，直接展示 */}
+                      {((err.exercises?.length ?? 0) > 0 ||
+                        practicePanels[i]?.moreError) && (
+                        <ErrorExercises
+                          exercises={err.exercises ?? []}
                           panel={practicePanels[i]}
                           onPick={(exIdx, opt) =>
                             updatePanelExercise(i, exIdx, {
@@ -1037,31 +917,12 @@ export default function Home() {
                           onCheckFill={(exIdx) =>
                             updatePanelExercise(i, exIdx, { checked: true })
                           }
-                          onRetry={() => handleExplainError(i)}
                           onMore={() => loadMoreExercises(i)}
                         />
                       )}
                     </li>
                   ))}
                 </ul>
-              )}
-
-              {cardMatches.length > 0 ? (
-                <div className="space-y-4 border-t border-slate-100 pt-4">
-                  <h4 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
-                    为你找到 {cardMatches.length} 个相关知识点
-                  </h4>
-                  {cardMatches.map((card, i) => (
-                    <Card
-                      key={card.id ?? `${card.card_code}-${i}`}
-                      card={card}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <p className="border-t border-slate-100 pt-4 text-xs text-slate-400">
-                  卡片库中没有匹配到相关知识点
-                </p>
               )}
             </div>
 
@@ -1187,7 +1048,7 @@ export default function Home() {
                           </>
                         );
                       })()}
-                      {err.keywords?.length > 0 && (
+                      {err.keywords && err.keywords.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
                           {err.keywords.map((k, j) => (
                             <span
@@ -1421,62 +1282,27 @@ export default function Home() {
   );
 }
 
-/** 作文批改中"这个知识点我不懂"展开的讲解 + 练习区 */
-function PracticeArea(props: {
-  panel: PracticePanel;
+/** 每处错误下方的针对性练习区（练习在作文分析时已由 AI 现场生成） */
+function ErrorExercises(props: {
+  exercises: Exercise[];
+  panel?: PracticePanel;
   onPick: (exIdx: number, opt: string) => void;
   onFill: (exIdx: number, text: string) => void;
   onCheckFill: (exIdx: number) => void;
-  onRetry: () => void;
   onMore: () => void;
 }) {
-  const { panel, onPick, onFill, onCheckFill, onRetry, onMore } = props;
-
-  if (panel.loading) {
-    return (
-      <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-600">
-        正在匹配知识点卡片、生成针对性练习…
-      </div>
-    );
-  }
+  const { exercises, panel, onPick, onFill, onCheckFill, onMore } = props;
 
   return (
-    <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
-      {/* 关键词匹配到的知识点卡片 */}
-      {panel.cards.length > 0 ? (
-        panel.cards.map((card, i) => (
-          <Card key={card.id ?? `${card.card_code}-${i}`} card={card} />
-        ))
-      ) : (
-        !panel.failed && (
-          <p className="text-xs text-slate-400">
-            卡片库中暂时没有直接对应的知识点卡片，先做下面的练习吧
-          </p>
-        )
-      )}
-
-      {panel.failed ? (
-        <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-2">
-          <span className="text-xs text-red-700">
-            针对性练习生成失败（不影响上面的知识点卡片）
-          </span>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="rounded-lg bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700"
-          >
-            重试
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
-          <p className="text-xs font-semibold text-violet-700">
-            🎯 针对性变式练习 · {panel.knowledgePoint}
-          </p>
-          {panel.exercises.map((ex, j) => {
-            const checked = panel.checked[j];
-            const picked = panel.picked[j] ?? null;
-            const fillVal = panel.fillText[j] ?? "";
+    <div className="space-y-4 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+      <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
+        <p className="text-xs font-semibold text-violet-700">
+          🎯 针对性变式练习（共 {exercises.length} 道）
+        </p>
+        {exercises.map((ex, j) => {
+          const checked = panel?.checked[j] ?? false;
+          const picked = panel?.picked[j] ?? null;
+          const fillVal = panel?.fillText[j] ?? "";
             const fillCorrect =
               fillVal.trim().toLowerCase() === ex.answer.trim().toLowerCase();
             return (
@@ -1578,10 +1404,10 @@ function PracticeArea(props: {
             <button
               type="button"
               onClick={onMore}
-              disabled={panel.loadingMore}
+              disabled={panel?.loadingMore}
               className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {panel.loadingMore ? (
+              {panel?.loadingMore ? (
                 <>
                   <svg
                     className="h-3.5 w-3.5 animate-spin"
@@ -1609,14 +1435,13 @@ function PracticeArea(props: {
               )}
             </button>
             <p className="text-xs text-slate-400">
-              已出 {panel.exercises.length} 道，新题不会与已有题目重复
+              已出 {exercises.length} 道，新题不会与已有题目重复
             </p>
-            {panel.moreError && (
+            {panel?.moreError && (
               <p className="text-xs text-red-600">⚠️ {panel.moreError}</p>
             )}
           </div>
         </div>
-      )}
     </div>
   );
 }
