@@ -16,7 +16,7 @@ interface AnalysisError {
   suggestion?: string; // 修改建议（作文分析使用）
   knowledge_point?: string; // 细化知识点（作文分析使用，如"主谓一致 - 就近一致"）
   exercises?: Exercise[]; // 作文分析现场生成的针对性练习
-  keywords?: string[]; // 智能语法分析使用
+  keywords?: string[]; // 旧字段（单题分析已改用 knowledge_point）
 }
 
 /** 已上传的错题图片（Supabase Storage 公共 URL） */
@@ -60,6 +60,33 @@ interface PracticePanel {
   moreError?: string; // "生成更多"失败提示
 }
 
+/** 练习题作答状态（单题分析与作文分析共用） */
+interface ExerciseState {
+  picked: (string | null)[];
+  fillText: string[];
+  checked: boolean[];
+}
+
+/** /api/explain 返回的知识点现场讲解 */
+interface KnowledgeExplain {
+  knowledge_point: string;
+  rules: string;
+  examples: string;
+  confusions: string;
+  common_mistakes: string;
+}
+
+/** 单题语法分析中每处错误的交互面板（讲解 + 练习），key 为错误下标 */
+interface AnalyzePanel extends ExerciseState {
+  explainBusy: boolean;
+  explainOpen: boolean; // 讲解区是否展开
+  explain?: KnowledgeExplain;
+  explainError?: string;
+  exBusy: boolean; // 生成练习题请求中
+  exercises: Exercise[];
+  exError?: string;
+}
+
 export default function Home() {
   // 输入与分析状态
   const [analysisText, setAnalysisText] = useState("");
@@ -72,7 +99,10 @@ export default function Home() {
     null
   );
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [cardMatches, setCardMatches] = useState<GrammarCard[]>([]);
+  // 单题分析每处错误的"讲解 + 练习"面板，key 为错误下标
+  const [analyzePanels, setAnalyzePanels] = useState<
+    Record<number, AnalyzePanel>
+  >({});
 
   // 分步引导答题状态
   const [mode, setMode] = useState<"analyze" | "guide" | "essay" | null>(null);
@@ -112,7 +142,7 @@ export default function Home() {
   function resetResults() {
     setAnalysisError(null);
     setAnalysisErrors(null);
-    setCardMatches([]);
+    setAnalyzePanels({});
     setMode(null);
     setGuide(null);
     setEssayResult(null);
@@ -127,7 +157,7 @@ export default function Home() {
     setGFinished(false);
   }
 
-  /** 调用 DeepSeek 分析 + 匹配知识点卡片（要求调用方已进入 busy 状态） */
+  /** 调用 /api/analyze 单题语法分析（无卡片，错误自带细化知识点与三段讲解） */
   async function runAnalysis(text: string) {
     setBusyHint("AI 正在分析语法…");
     const res = await fetch("/api/analyze", {
@@ -138,27 +168,11 @@ export default function Home() {
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error ?? "分析失败，请重试");
 
-    const errors: AnalysisError[] = Array.isArray(data?.errors) ? data.errors : [];
-    setAnalysisErrors(errors);
-
-    // AI 直接返回知识点编号，前端用 .in() 精确取卡，结果稳定可复现
-    const codes: string[] = Array.isArray(data?.matched_card_codes)
-      ? data.matched_card_codes.filter((c: unknown) => typeof c === "string")
+    const errors: AnalysisError[] = Array.isArray(data?.errors)
+      ? data.errors
       : [];
-    if (codes.length) {
-      const { data: matched, error: qErr } = await getSupabase()
-        .from("grammar_cards")
-        .select("*")
-        .in("card_code", codes);
-      if (qErr) throw qErr;
-      // 按 AI 返回的编号顺序排列
-      const byCode = new Map(
-        ((matched as GrammarCard[] | null) ?? []).map((c) => [c.card_code, c])
-      );
-      setCardMatches(
-        codes.map((c) => byCode.get(c)).filter((c): c is GrammarCard => !!c)
-      );
-    }
+    setAnalysisErrors(errors);
+    setAnalyzePanels({});
     setMode("analyze");
   }
 
@@ -473,6 +487,183 @@ export default function Home() {
     });
   }
 
+  /** 更新单题分析面板里某道题的作答状态 */
+  function updateAnalyzeExercise(
+    errIdx: number,
+    exIdx: number,
+    patch: Partial<{
+      picked: string | null;
+      fillText: string;
+      checked: boolean;
+    }>
+  ) {
+    setAnalyzePanels((p) => {
+      const panel = p[errIdx];
+      if (!panel) return p;
+      const next: AnalyzePanel = {
+        ...panel,
+        picked: [...panel.picked],
+        fillText: [...panel.fillText],
+        checked: [...panel.checked],
+      };
+      if (patch.picked !== undefined) next.picked[exIdx] = patch.picked;
+      if (patch.fillText !== undefined) next.fillText[exIdx] = patch.fillText;
+      if (patch.checked !== undefined) next.checked[exIdx] = patch.checked;
+      return { ...p, [errIdx]: next };
+    });
+  }
+
+  /** "更多知识点讲解"：调 /api/explain 现场讲解；已有讲解时点击为收起/展开 */
+  async function handleExplainKnowledge(idx: number) {
+    if (!analysisErrors) return;
+    const err = analysisErrors[idx];
+    if (!err) return;
+    const panel = analyzePanels[idx];
+    if (panel?.explain) {
+      setAnalyzePanels((p) =>
+        p[idx] ? { ...p, [idx]: { ...p[idx], explainOpen: !p[idx].explainOpen } } : p
+      );
+      return;
+    }
+    if (panel?.explainBusy) return;
+
+    setAnalyzePanels((p) => ({
+      ...p,
+      [idx]: {
+        explainBusy: true,
+        explainOpen: true,
+        exercises: p[idx]?.exercises ?? [],
+        picked: p[idx]?.picked ?? [],
+        fillText: p[idx]?.fillText ?? [],
+        checked: p[idx]?.checked ?? [],
+        exBusy: p[idx]?.exBusy ?? false,
+      },
+    }));
+    try {
+      const res = await fetch("/api/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          knowledge_point: err.knowledge_point ?? "",
+          original: err.original,
+          corrected: err.corrected,
+          reason:
+            [err.reason ?? err.explanation, err.suggestion]
+              .filter(Boolean)
+              .join("\n修改建议：") || "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "生成讲解失败");
+      setAnalyzePanels((p) =>
+        p[idx]
+          ? {
+              ...p,
+              [idx]: {
+                ...p[idx],
+                explainBusy: false,
+                explainOpen: true,
+                explain: {
+                  knowledge_point: String(data?.knowledge_point ?? ""),
+                  rules: String(data?.rules ?? ""),
+                  examples: String(data?.examples ?? ""),
+                  confusions: String(data?.confusions ?? ""),
+                  common_mistakes: String(data?.common_mistakes ?? ""),
+                },
+              },
+            }
+          : p
+      );
+    } catch (e) {
+      setAnalyzePanels((p) =>
+        p[idx]
+          ? {
+              ...p,
+              [idx]: {
+                ...p[idx],
+                explainBusy: false,
+                explainError:
+                  e instanceof Error ? e.message : "生成讲解失败，请重试",
+              },
+            }
+          : p
+      );
+    }
+  }
+
+  /** "生成（更多）练习题"：首次生成 1-3 道，之后追加并排除已出题 */
+  async function handleAnalyzeExercises(idx: number) {
+    if (!analysisErrors) return;
+    const err = analysisErrors[idx];
+    const panel = analyzePanels[idx];
+    if (!err || panel?.exBusy) return;
+
+    setAnalyzePanels((p) => ({
+      ...p,
+      [idx]: {
+        explainBusy: p[idx]?.explainBusy ?? false,
+        explainOpen: p[idx]?.explainOpen ?? false,
+        explain: p[idx]?.explain,
+        exBusy: true,
+        exError: undefined,
+        exercises: p[idx]?.exercises ?? [],
+        picked: p[idx]?.picked ?? [],
+        fillText: p[idx]?.fillText ?? [],
+        checked: p[idx]?.checked ?? [],
+      },
+    }));
+    try {
+      const existed = panel?.exercises ?? [];
+      const res = await fetch("/api/practice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          knowledge_point: err.knowledge_point ?? "",
+          original: err.original,
+          corrected: err.corrected,
+          reason:
+            [err.reason ?? err.explanation, err.suggestion]
+              .filter(Boolean)
+              .join("\n修改建议：") || "",
+          exclude: existed.map((ex) => ex.question),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "生成练习题失败");
+      const more = (Array.isArray(data?.exercises) ? data.exercises : []) as Exercise[];
+      if (more.length === 0) throw new Error("AI 没有生成有效的练习题");
+
+      setAnalyzePanels((p) => {
+        const cur = p[idx];
+        if (!cur) return p;
+        return {
+          ...p,
+          [idx]: {
+            ...cur,
+            exBusy: false,
+            exercises: [...cur.exercises, ...more],
+            picked: [...cur.picked, ...more.map(() => null)],
+            fillText: [...cur.fillText, ...more.map(() => "")],
+            checked: [...cur.checked, ...more.map(() => false)],
+          },
+        };
+      });
+    } catch (e) {
+      setAnalyzePanels((p) =>
+        p[idx]
+          ? {
+              ...p,
+              [idx]: {
+                ...p[idx],
+                exBusy: false,
+                exError: e instanceof Error ? e.message : "生成失败，请重试",
+              },
+            }
+          : p
+      );
+    }
+  }
+
   /** 两步作文分析 */
   async function handleEssay() {
     const topic = topicText.trim();
@@ -558,10 +749,10 @@ export default function Home() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
               Grammar Radar{" "}
-              <span className="text-indigo-600">· 智能语法分析</span>
+              <span className="text-indigo-600">· 单题语法分析</span>
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              粘贴英文句子，或上传错题图片，AI 自动找出语法错误并匹配知识点卡片
+              粘贴英文句子，或上传错题图片，AI 自动找出语法错误、讲解细化知识点并生成针对性练习
             </p>
           </div>
 
@@ -608,7 +799,7 @@ export default function Home() {
               value={analysisText}
               onChange={(e) => setAnalysisText(e.target.value)}
               rows={6}
-              placeholder="粘贴你的作文（作文分析用），或一句/一段英文（智能分析、分步引导用）；也可以点下方按钮上传图片自动识别…"
+              placeholder="粘贴你的作文（作文分析用），或一句/一段英文（单题分析、分步引导用）；也可以点下方按钮上传图片自动识别…"
               className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
             />
           </div>
@@ -721,7 +912,7 @@ export default function Home() {
                   {busyHint || "处理中…"}
                 </>
               ) : (
-                <>✨ 智能语法分析</>
+                <>✨ 单题语法分析</>
               )}
             </button>
             <button
@@ -853,7 +1044,7 @@ export default function Home() {
                         </span>
                       </p>
                       {(() => {
-                        // 与"智能语法分析"统一的三段风格：
+                        // 与"单题语法分析"统一的三段风格：
                         // 错误原因（灰框）→ 语境解释（琥珀框）→ 修改建议（绿框）
                         const reason = err.reason || err.explanation || "";
                         const contextNote = (err.context_note ?? "").trim();
@@ -1005,11 +1196,16 @@ export default function Home() {
                 <h3 className="text-sm font-semibold text-slate-900">
                   AI 分析结果（{analysisErrors.length} 处错误）
                 </h3>
-                <ul className="space-y-3">
-                  {analysisErrors.map((err, i) => (
+                <ul className="space-y-4">
+                  {analysisErrors.map((err, i) => {
+                    const reason = err.reason || err.explanation || "";
+                    const contextNote = (err.context_note ?? "").trim();
+                    const suggestion = (err.suggestion ?? "").trim();
+                    const panel = analyzePanels[i];
+                    return (
                     <li
                       key={i}
-                      className="space-y-1.5 border-l-4 border-amber-300 pl-3"
+                      className="space-y-2 border-l-4 border-amber-300 pl-3"
                     >
                       <p className="text-sm">
                         <span className="text-red-600 line-through">
@@ -1020,67 +1216,113 @@ export default function Home() {
                           {err.corrected}
                         </span>
                       </p>
-                      {(() => {
-                        const reason = err.reason || err.explanation || "";
-                        const contextNote = (err.context_note ?? "").trim();
-                        return (
-                          <>
-                            {reason && (
-                              <div className="rounded-md bg-slate-50 px-3 py-2">
-                                <p className="text-xs font-semibold text-slate-400">
-                                  错误原因
-                                </p>
-                                <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
-                                  {reason}
-                                </p>
-                              </div>
-                            )}
-                            {contextNote && (
-                              <div className="rounded-md bg-amber-50 px-3 py-2">
-                                <p className="text-xs font-semibold text-amber-500">
-                                  语境 / 搭配解释
-                                </p>
-                                <p className="mt-1 text-sm whitespace-pre-line text-amber-900">
-                                  {contextNote}
-                                </p>
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
-                      {err.keywords && err.keywords.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {err.keywords.map((k, j) => (
-                            <span
-                              key={j}
-                              className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700"
-                            >
-                              {k}
-                            </span>
-                          ))}
+                      {reason && (
+                        <div className="rounded-md bg-slate-50 px-3 py-2">
+                          <p className="text-xs font-semibold text-slate-400">
+                            错误原因
+                          </p>
+                          <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
+                            {reason}
+                          </p>
+                        </div>
+                      )}
+                      {contextNote && (
+                        <div className="rounded-md bg-amber-50 px-3 py-2">
+                          <p className="text-xs font-semibold text-amber-500">
+                            语境 / 搭配解释
+                          </p>
+                          <p className="mt-1 text-sm whitespace-pre-line text-amber-900">
+                            {contextNote}
+                          </p>
+                        </div>
+                      )}
+                      {suggestion && (
+                        <div className="rounded-md bg-emerald-50 px-3 py-2">
+                          <p className="text-xs font-semibold text-emerald-600">
+                            修改建议
+                          </p>
+                          <p className="mt-1 text-sm whitespace-pre-line text-emerald-900">
+                            {suggestion}
+                          </p>
+                        </div>
+                      )}
+                      {err.knowledge_point && (
+                        <span className="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700">
+                          📌 {err.knowledge_point}
+                        </span>
+                      )}
+
+                      {/* 讲解 / 练习 两个按钮并排同一行 */}
+                      <div className="flex flex-wrap gap-2 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleExplainKnowledge(i)}
+                          disabled={panel?.explainBusy}
+                          className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
+                        >
+                          {panel?.explainBusy
+                            ? "正在生成讲解…"
+                            : panel?.explain
+                              ? panel.explainOpen
+                                ? "📕 收起知识点讲解"
+                                : "📖 更多知识点讲解"
+                              : "📖 更多知识点讲解"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAnalyzeExercises(i)}
+                          disabled={panel?.exBusy}
+                          className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
+                        >
+                          {panel?.exBusy ? "正在生成练习题…" : "🔄 生成更多练习题"}
+                        </button>
+                      </div>
+
+                      {panel?.explainError && (
+                        <p className="text-xs text-red-600">
+                          ⚠️ {panel.explainError}
+                        </p>
+                      )}
+                      {panel?.explainOpen &&
+                        (panel.explainBusy ? (
+                          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-600">
+                            老师正在组织讲解内容…
+                          </div>
+                        ) : (
+                          panel.explain && (
+                            <KnowledgeExplainView explain={panel.explain} />
+                          )
+                        ))}
+
+                      {panel?.exError && (
+                        <p className="text-xs text-red-600">⚠️ {panel.exError}</p>
+                      )}
+                      {panel && panel.exercises.length > 0 && (
+                        <div className="space-y-4 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+                          <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
+                            <ExerciseList
+                              exercises={panel.exercises}
+                              state={panel}
+                              onPick={(exIdx, opt) =>
+                                updateAnalyzeExercise(i, exIdx, {
+                                  picked: opt,
+                                  checked: true,
+                                })
+                              }
+                              onFill={(exIdx, text) =>
+                                updateAnalyzeExercise(i, exIdx, { fillText: text })
+                              }
+                              onCheckFill={(exIdx) =>
+                                updateAnalyzeExercise(i, exIdx, { checked: true })
+                              }
+                            />
+                          </div>
                         </div>
                       )}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
-
-                {cardMatches.length > 0 ? (
-                  <div className="space-y-4 border-t border-slate-100 pt-4">
-                    <h4 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
-                      为你找到 {cardMatches.length} 个相关知识点
-                    </h4>
-                    {cardMatches.map((card, i) => (
-                      <Card
-                        key={card.id ?? `${card.card_code}-${i}`}
-                        card={card}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="border-t border-slate-100 pt-4 text-xs text-slate-400">
-                    卡片库中没有匹配到相关知识点
-                  </p>
-                )}
               </>
             )}
           </div>
@@ -1273,7 +1515,7 @@ export default function Home() {
           <div className="py-16 text-center text-slate-400">
             <p className="text-4xl">✍️</p>
             <p className="mt-3 text-sm">
-              粘贴英文句子或上传错题图片，选择智能分析、作文分析或分步引导答题
+              粘贴英文句子或上传错题图片，选择单题语法分析、作文分析或分步引导答题
             </p>
           </div>
         )}
@@ -1282,7 +1524,154 @@ export default function Home() {
   );
 }
 
-/** 每处错误下方的针对性练习区（练习在作文分析时已由 AI 现场生成） */
+/** 练习题列表（单题分析与作文分析共用）：作答 + 即时判分 + 解析 */
+function ExerciseList(props: {
+  exercises: Exercise[];
+  state?: ExerciseState;
+  onPick: (exIdx: number, opt: string) => void;
+  onFill: (exIdx: number, text: string) => void;
+  onCheckFill: (exIdx: number) => void;
+}) {
+  const { exercises, state, onPick, onFill, onCheckFill } = props;
+  return (
+    <>
+      <p className="text-xs font-semibold text-violet-700">
+        🎯 针对性变式练习（共 {exercises.length} 道）
+      </p>
+      {exercises.map((ex, j) => {
+        const checked = state?.checked[j] ?? false;
+        const picked = state?.picked[j] ?? null;
+        const fillVal = state?.fillText[j] ?? "";
+        const fillCorrect =
+          fillVal.trim().toLowerCase() === ex.answer.trim().toLowerCase();
+        return (
+          <div
+            key={j}
+            className="space-y-2 border-t border-slate-100 pt-3 first:border-t-0 first:pt-0"
+          >
+            <p className="text-sm font-medium text-slate-800">
+              {j + 1}. {ex.question}
+            </p>
+
+            {ex.type === "choice" ? (
+              <div className="space-y-1.5">
+                {ex.options.map((opt, k) => {
+                  const isAnswer = opt === ex.answer;
+                  const isPicked = picked === opt;
+                  let cls =
+                    "border-slate-200 bg-white text-slate-700 hover:border-violet-400 hover:bg-violet-50";
+                  if (checked) {
+                    if (isAnswer)
+                      cls = "border-emerald-500 bg-emerald-50 text-emerald-800";
+                    else if (isPicked)
+                      cls = "border-red-400 bg-red-50 text-red-700";
+                    else cls = "border-slate-200 bg-white text-slate-400";
+                  }
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      disabled={checked}
+                      onClick={() => onPick(j, opt)}
+                      className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition disabled:cursor-default ${cls}`}
+                    >
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current text-xs font-semibold opacity-70">
+                        {String.fromCharCode(65 + k)}
+                      </span>
+                      <span className="flex-1">{opt}</span>
+                      {checked && isAnswer && <span>✅</span>}
+                      {checked && !isAnswer && isPicked && <span>❌</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={fillVal}
+                  disabled={checked}
+                  onChange={(e) => onFill(j, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && fillVal.trim())
+                      onCheckFill(j);
+                  }}
+                  placeholder="填入英文答案"
+                  className="w-48 rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-200 disabled:bg-slate-50"
+                />
+                {!checked && (
+                  <button
+                    type="button"
+                    disabled={!fillVal.trim()}
+                    onClick={() => onCheckFill(j)}
+                    className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 disabled:opacity-60"
+                  >
+                    提交
+                  </button>
+                )}
+              </div>
+            )}
+
+            {checked && (
+              <div
+                className={`rounded-lg px-3 py-2 text-xs leading-relaxed ${
+                  ex.type === "choice"
+                    ? picked === ex.answer
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "bg-red-50 text-red-800"
+                    : fillCorrect
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "bg-red-50 text-red-800"
+                }`}
+              >
+                {ex.type === "choice"
+                  ? picked === ex.answer
+                    ? "✅ 答对了！"
+                    : `❌ 正确答案是「${ex.answer}」。`
+                  : fillCorrect
+                    ? "✅ 答对了！"
+                    : `❌ 正确答案是「${ex.answer}」。`}
+                {ex.explanation && (
+                  <span className="mt-0.5 block text-slate-700">
+                    💡 {ex.explanation}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** 知识点现场讲解（/api/explain）：规则 / 例句 / 易混淆点 / 常见错误 */
+function KnowledgeExplainView({ explain }: { explain: KnowledgeExplain }) {
+  const sections: { title: string; cls: string; body: string }[] = [
+    { title: "📐 核心规则", cls: "bg-slate-50 text-slate-700", body: explain.rules },
+    { title: "📝 例句", cls: "bg-emerald-50 text-emerald-900", body: explain.examples },
+    { title: "🔀 易混淆点", cls: "bg-amber-50 text-amber-900", body: explain.confusions },
+    { title: "⚠️ 常见错误", cls: "bg-rose-50 text-rose-900", body: explain.common_mistakes },
+  ];
+  return (
+    <div className="space-y-2 rounded-xl border border-sky-200 bg-sky-50/40 p-3">
+      <p className="text-xs font-semibold text-sky-700">
+        📖 知识点讲解 · {explain.knowledge_point}
+      </p>
+      {sections
+        .filter((s) => s.body.trim())
+        .map((s) => (
+          <div key={s.title} className={`rounded-lg px-3 py-2 ${s.cls}`}>
+            <p className="text-xs font-semibold opacity-70">{s.title}</p>
+            <p className="mt-1 text-sm whitespace-pre-line leading-relaxed">
+              {s.body}
+            </p>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+/** 作文分析每处错误下方的练习区（练习在批改时已生成，底部可追加） */
 function ErrorExercises(props: {
   exercises: Exercise[];
   panel?: PracticePanel;
@@ -1296,152 +1685,57 @@ function ErrorExercises(props: {
   return (
     <div className="space-y-4 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
       <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
-        <p className="text-xs font-semibold text-violet-700">
-          🎯 针对性变式练习（共 {exercises.length} 道）
-        </p>
-        {exercises.map((ex, j) => {
-          const checked = panel?.checked[j] ?? false;
-          const picked = panel?.picked[j] ?? null;
-          const fillVal = panel?.fillText[j] ?? "";
-            const fillCorrect =
-              fillVal.trim().toLowerCase() === ex.answer.trim().toLowerCase();
-            return (
-              <div key={j} className="space-y-2 border-t border-slate-100 pt-3 first:border-t-0 first:pt-0">
-                <p className="text-sm font-medium text-slate-800">
-                  {j + 1}. {ex.question}
-                </p>
+        <ExerciseList
+          exercises={exercises}
+          state={panel}
+          onPick={onPick}
+          onFill={onFill}
+          onCheckFill={onCheckFill}
+        />
 
-                {ex.type === "choice" ? (
-                  <div className="space-y-1.5">
-                    {ex.options.map((opt, k) => {
-                      const isAnswer = opt === ex.answer;
-                      const isPicked = picked === opt;
-                      let cls =
-                        "border-slate-200 bg-white text-slate-700 hover:border-violet-400 hover:bg-violet-50";
-                      if (checked) {
-                        if (isAnswer)
-                          cls = "border-emerald-500 bg-emerald-50 text-emerald-800";
-                        else if (isPicked)
-                          cls = "border-red-400 bg-red-50 text-red-700";
-                        else cls = "border-slate-200 bg-white text-slate-400";
-                      }
-                      return (
-                        <button
-                          key={k}
-                          type="button"
-                          disabled={checked}
-                          onClick={() => onPick(j, opt)}
-                          className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition disabled:cursor-default ${cls}`}
-                        >
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current text-xs font-semibold opacity-70">
-                            {String.fromCharCode(65 + k)}
-                          </span>
-                          <span className="flex-1">{opt}</span>
-                          {checked && isAnswer && <span>✅</span>}
-                          {checked && !isAnswer && isPicked && <span>❌</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      value={fillVal}
-                      disabled={checked}
-                      onChange={(e) => onFill(j, e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && fillVal.trim())
-                          onCheckFill(j);
-                      }}
-                      placeholder="填入英文答案"
-                      className="w-48 rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-200 disabled:bg-slate-50"
-                    />
-                    {!checked && (
-                      <button
-                        type="button"
-                        disabled={!fillVal.trim()}
-                        onClick={() => onCheckFill(j)}
-                        className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 disabled:opacity-60"
-                      >
-                        提交
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {checked && (
-                  <div
-                    className={`rounded-lg px-3 py-2 text-xs leading-relaxed ${
-                      ex.type === "choice"
-                        ? picked === ex.answer
-                          ? "bg-emerald-50 text-emerald-800"
-                          : "bg-red-50 text-red-800"
-                        : fillCorrect
-                          ? "bg-emerald-50 text-emerald-800"
-                          : "bg-red-50 text-red-800"
-                    }`}
-                  >
-                    {ex.type === "choice"
-                      ? picked === ex.answer
-                        ? "✅ 答对了！"
-                        : `❌ 正确答案是「${ex.answer}」。`
-                      : fillCorrect
-                        ? "✅ 答对了！"
-                        : `❌ 正确答案是「${ex.answer}」。`}
-                    {ex.explanation && (
-                      <span className="mt-0.5 block text-slate-700">
-                        💡 {ex.explanation}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {/* 生成更多练习题 */}
-          <div className="space-y-1.5 border-t border-slate-100 pt-3 text-center">
-            <button
-              type="button"
-              onClick={onMore}
-              disabled={panel?.loadingMore}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {panel?.loadingMore ? (
-                <>
-                  <svg
-                    className="h-3.5 w-3.5 animate-spin"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                    />
-                  </svg>
-                  正在生成新题目…
-                </>
-              ) : (
-                <>🔄 生成更多练习题</>
-              )}
-            </button>
-            <p className="text-xs text-slate-400">
-              已出 {exercises.length} 道，新题不会与已有题目重复
-            </p>
-            {panel?.moreError && (
-              <p className="text-xs text-red-600">⚠️ {panel.moreError}</p>
+        {/* 生成更多练习题 */}
+        <div className="space-y-1.5 border-t border-slate-100 pt-3 text-center">
+          <button
+            type="button"
+            onClick={onMore}
+            disabled={panel?.loadingMore}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {panel?.loadingMore ? (
+              <>
+                <svg
+                  className="h-3.5 w-3.5 animate-spin"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                  />
+                </svg>
+                正在生成新题目…
+              </>
+            ) : (
+              <>🔄 生成更多练习题</>
             )}
-          </div>
+          </button>
+          <p className="text-xs text-slate-400">
+            已出 {exercises.length} 道，新题不会与已有题目重复
+          </p>
+          {panel?.moreError && (
+            <p className="text-xs text-red-600">⚠️ {panel.moreError}</p>
+          )}
         </div>
+      </div>
     </div>
   );
 }
