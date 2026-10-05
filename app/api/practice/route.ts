@@ -8,6 +8,7 @@ const SYSTEM_PROMPT = `你是一名中学英语老师。学生在作文里犯了
 3. 题型用单项选择题（4 选 1）或填空题，每道题只考这一个知识点
 4. 每题必须给出正确答案和一句简短解析（讲清为什么，中文）
 5. 不要在题干或解析中暴露学生的错误句子，让学生独立做
+6. 如果提供了"已经出过的题目"，新题目绝对不能与它们重复，场景和句式都要换新的
 
 严格按照以下 JSON 格式返回，不要输出任何其他内容：
 {
@@ -44,12 +45,14 @@ export async function POST(req: NextRequest) {
   let original = "";
   let corrected = "";
   let reason = "";
+  let exclude: unknown = [];
   try {
     const body = await req.json();
     keyword = typeof body?.keyword === "string" ? body.keyword : "";
     original = typeof body?.original === "string" ? body.original : "";
     corrected = typeof body?.corrected === "string" ? body.corrected : "";
     reason = typeof body?.reason === "string" ? body.reason : "";
+    exclude = Array.isArray(body?.exclude) ? body.exclude : [];
   } catch {
     return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
   }
@@ -60,11 +63,22 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const excludeList = (Array.isArray(exclude) ? exclude : [])
+    .filter((q): q is string => typeof q === "string" && !!q.trim())
+    .map((q) => q.trim())
+    .slice(0, 20);
+
   const userContent = `【知识点】${keyword.slice(0, 200) || reason.slice(0, 200)}
 【学生作文里的错误片段】${original.slice(0, 300)}
 【正确写法】${corrected.slice(0, 300)}
 【错误原因】${reason.slice(0, 500)}
-
+${
+  excludeList.length
+    ? `【已经出过的题目（禁止重复，请换新场景新句式）】\n${excludeList
+        .map((q, i) => `${i + 1}. ${q.slice(0, 300)}`)
+        .join("\n")}\n`
+    : ""
+}
 请生成 1-3 道变式练习题。`;
 
   try {

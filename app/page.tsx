@@ -74,6 +74,8 @@ interface PracticeExercise {
 interface PracticePanel {
   loading: boolean;
   failed: boolean;
+  loadingMore: boolean; // "生成更多"请求中
+  moreError?: string; // "生成更多"失败提示
   knowledgePoint: string;
   cards: GrammarCard[];
   exercises: PracticeExercise[];
@@ -430,6 +432,7 @@ export default function Home() {
       [idx]: {
         loading: true,
         failed: false,
+        loadingMore: false,
         knowledgePoint: keyword,
         cards: [],
         exercises: [],
@@ -481,6 +484,7 @@ export default function Home() {
         [idx]: {
           loading: false,
           failed: false,
+          loadingMore: false,
           knowledgePoint: practice.knowledgePoint,
           cards,
           exercises: practice.exercises,
@@ -497,6 +501,7 @@ export default function Home() {
         [idx]: {
           loading: false,
           failed: true,
+          loadingMore: false,
           knowledgePoint: keyword,
           cards,
           exercises: [],
@@ -505,6 +510,68 @@ export default function Home() {
           checked: [],
         },
       }));
+    }
+  }
+
+  /** "生成更多练习题"：带上已出题列表，避免重复，追加到面板 */
+  async function loadMoreExercises(idx: number) {
+    if (!essayResult) return;
+    const err = essayResult.errors[idx];
+    const panel = practicePanels[idx];
+    if (!err || !panel || panel.loadingMore) return;
+
+    setPracticePanels((p) =>
+      p[idx]
+        ? { ...p, [idx]: { ...p[idx], loadingMore: true, moreError: undefined } }
+        : p
+    );
+    try {
+      const res = await fetch("/api/practice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          keyword: panel.knowledgePoint,
+          original: err.original,
+          corrected: err.corrected,
+          reason: err.reason ?? err.explanation ?? "",
+          exclude: panel.exercises.map((ex) => ex.question),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "生成练习题失败");
+      const more = (Array.isArray(data?.exercises)
+        ? data.exercises
+        : []) as PracticeExercise[];
+      if (more.length === 0) throw new Error("AI 没有生成新的练习题");
+      setPracticePanels((p) => {
+        const cur = p[idx];
+        if (!cur) return p;
+        return {
+          ...p,
+          [idx]: {
+            ...cur,
+            loadingMore: false,
+            knowledgePoint: String(data?.knowledge_point ?? cur.knowledgePoint),
+            exercises: [...cur.exercises, ...more],
+            picked: [...cur.picked, ...more.map(() => null)],
+            fillText: [...cur.fillText, ...more.map(() => "")],
+            checked: [...cur.checked, ...more.map(() => false)],
+          },
+        };
+      });
+    } catch (e) {
+      setPracticePanels((p) =>
+        p[idx]
+          ? {
+              ...p,
+              [idx]: {
+                ...p[idx],
+                loadingMore: false,
+                moreError: e instanceof Error ? e.message : "生成失败，请重试",
+              },
+            }
+          : p
+      );
     }
   }
 
@@ -1014,6 +1081,7 @@ export default function Home() {
                             updatePanelExercise(i, exIdx, { checked: true })
                           }
                           onRetry={() => handleExplainError(i)}
+                          onMore={() => loadMoreExercises(i)}
                         />
                       )}
                     </li>
@@ -1471,8 +1539,9 @@ function PracticeArea(props: {
   onFill: (exIdx: number, text: string) => void;
   onCheckFill: (exIdx: number) => void;
   onRetry: () => void;
+  onMore: () => void;
 }) {
-  const { panel, onPick, onFill, onCheckFill, onRetry } = props;
+  const { panel, onPick, onFill, onCheckFill, onRetry, onMore } = props;
 
   if (panel.loading) {
     return (
@@ -1614,6 +1683,49 @@ function PracticeArea(props: {
               </div>
             );
           })}
+
+          {/* 生成更多练习题 */}
+          <div className="space-y-1.5 border-t border-slate-100 pt-3 text-center">
+            <button
+              type="button"
+              onClick={onMore}
+              disabled={panel.loadingMore}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {panel.loadingMore ? (
+                <>
+                  <svg
+                    className="h-3.5 w-3.5 animate-spin"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                    />
+                  </svg>
+                  正在生成新题目…
+                </>
+              ) : (
+                <>🔄 生成更多练习题</>
+              )}
+            </button>
+            <p className="text-xs text-slate-400">
+              已出 {panel.exercises.length} 道，新题不会与已有题目重复
+            </p>
+            {panel.moreError && (
+              <p className="text-xs text-red-600">⚠️ {panel.moreError}</p>
+            )}
+          </div>
         </div>
       )}
     </div>
