@@ -1,14 +1,68 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeExercises, parseLooseJson } from "@/lib/exercise";
 
-const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用户会给你两样东西：①作文的题目要求（可能包含题目、词数要求、内容要点等）；②学生写的作文。
+/** 各写作范围的批改约束：词汇难度 / 句式难度 / 评分维度 */
+function buildScopeGuide(scope: string): string {
+  const UNIT = ["七上", "七下", "八上", "八下", "九上", "九下"];
+  const isUnit = UNIT.includes(scope);
+  const isZhongkao = scope === "中考";
+  const isGaokao = scope === "高考";
+  const isKetPet = scope === "KET" || scope === "PET";
+  const isFceCae = scope === "FCE" || scope === "CAE";
+  const isIelts = scope === "雅思";
+  const isToefl = scope === "托福";
 
-你必须依次完成以下四项分析，不允许跳过：
+  // 未选择范围时默认按中考标准
+  const label = scope || "中考";
+
+  let vocab: string;
+  if (isUnit || isZhongkao || isGaokao) {
+    vocab = "以课标词汇为主，可以适当使用少量高级词汇，超出课标太多的用词要提示替换";
+  } else {
+    vocab = `按 ${label} 考试的词汇范围评判${
+      isKetPet ? "，允许并鼓励适当使用略高一级考试的词汇" : ""
+    }`;
+  }
+
+  let sentence: string;
+  if (isUnit || isZhongkao || isKetPet) {
+    sentence =
+      "句式以简单句和基础复合句为主，鼓励在恰当位置使用 1-2 个定语从句、状语从句或倒装句作为亮点，但不能堆砌复杂句式；亮点句要自然融入，不能为了用而用；段落清晰，连接词使用得当";
+    if (isUnit) {
+      sentence += `；本次为单元作文（${label}），还需紧扣该单元的核心词汇、句型和话题来评价`;
+    }
+  } else {
+    sentence =
+      "鼓励使用复杂从句、非谓语动词、倒装、虚拟语气等多种句式，句式多样性是加分项；段落清晰，连接词使用得当";
+  }
+
+  let dims: string[];
+  if (isIelts) dims = ["任务回应", "连贯与衔接", "词汇资源", "语法多样性与准确性"];
+  else if (isToefl) dims = ["语言运用"];
+  else if (isFceCae || isKetPet)
+    dims = ["内容", "沟通达成", "组织结构", "语言"];
+  else dims = ["内容", "语言", "结构"];
+
+  return `【写作范围】${label}
+- 词汇难度要求：${vocab}
+- 句式难度要求：${sentence}
+- 评分维度：${dims.join("、")}（scores 数组必须严格按这些维度给出，名称一字不差）
+- 高级表达推荐：在该范围的词汇范围内，把学生作文中平淡或不够地道的表达换成更地道、更精准的表达（不要超过该范围的水平）
+- 参考范文：严格按该范围的词汇和句式难度要求，重新写一篇高质量范文；词数参照题目要求，没有词数要求时按 ${label} 的典型长度`;
+}
+
+const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用户会给你两样东西：①作文的题目要求（可能包含题目、词数要求、内容要点等）；②学生写的作文。用户还会指定"写作范围"，你的评判标准、范文难度、评分维度都必须严格围绕该范围执行。
+
+你必须依次完成以下分析，不允许跳过：
 
 1.【扣题判断】：对照题目要求，判断作文是否切题。检查：主题是否一致、题目列出的内容要点是否都有覆盖、词数是否明显不达标（如果题目给了词数要求）。
 2.【结构评价】：判断作文结构是否合理：开头/主体/结尾是否完整、段落划分是否清晰、句子之间是否有基本衔接（first/also/finally 等）。
 3.【语言准确性】：总体评价用词、时态、句式的准确性和丰富度。
 4.【逐处语法错误】：找出作文中所有语法错误。判定标准以中国中考、高考英语语法为基础，硬性考点一律判错，严禁以"口语中常见"为由放过。
+5.【细化维度评价】：从词汇丰富度、句式多样性、衔接词使用、逻辑连贯性四个维度分别评价。每个维度必须：引用作文中的具体句子作为证据（用引号标出原文片段），指出好在哪里或问题在哪里，并给出可操作的改进建议。评价标准要与写作范围匹配（如中考不要求虚拟语气，就不要因缺少虚拟语气扣分）。
+6.【按评分维度打分】：按写作范围指定的评分维度逐项给出等级评价（优秀/良好/一般/待提高）和一句理由，理由要结合作文具体内容。
+7.【高级表达推荐】：挑 3-5 处学生写得平淡或不够地道的表达，给出更地道的替换写法。
+8.【参考范文】：按写作范围的要求重写一篇高质量范文。
 
 每处错误必须做到四件事：
 ① 给出细化到二级/三级的知识点名称（knowledge_point），格式为"大类 - 小类"，必要时"大类 - 小类 - 特殊情形"。严禁只给大类。参照下表细化（表外的知识点也按同样粒度命名）：
@@ -57,6 +111,19 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
   },
   "structure": "结构评价：1-3 句话",
   "language": "语言评价：1-3 句话",
+  "dimensions": {
+    "vocabulary": { "level": "优秀/良好/一般/待提高", "comment": "词汇丰富度评价：引用具体句子，指出问题或亮点，给改进建议" },
+    "sentence_variety": { "level": "...", "comment": "句式多样性评价：引用具体句子，结合写作范围的句式难度要求" },
+    "cohesive_devices": { "level": "...", "comment": "衔接词使用评价：引用具体句子" },
+    "coherence": { "level": "...", "comment": "逻辑连贯性评价：引用具体句子" }
+  },
+  "scores": [
+    { "name": "评分维度名（与写作范围指定的维度一致）", "level": "优秀/良好/一般/待提高", "comment": "一句结合作文具体内容的理由" }
+  ],
+  "advanced_expressions": [
+    { "original": "学生作文中的原表达", "better": "更地道的替换表达", "note": "一句中文说明为什么更好" }
+  ],
+  "model_essay": "参考范文（纯英文，按写作范围的词汇和句式难度写）",
   "errors": [
     {
       "original": "出错的原文片段",
@@ -83,7 +150,11 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
 2. original 必须是作文原文中出现的片段，不要改写
 3. 同一个片段有多个错误时分开逐条列出
 4. 每处错误的 exercises 固定给 2 道题
-5. 全部说明文字用中文，original/corrected/题目/选项/答案保持英文`;
+5. scores 数组的维度和顺序必须与"写作范围"指定的评分维度完全一致
+6. dimensions 四个键都必须给出，level 只能是：优秀、良好、一般、待提高
+7. advanced_expressions 给 3-5 条；original 必须是作文中出现过的表达
+8. model_essay 必须符合写作范围的词汇/句式难度，不要为了炫技超纲
+9. 全部说明文字用中文，original/corrected/better/题目/选项/答案/model_essay 保持英文`;
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -96,10 +167,12 @@ export async function POST(req: NextRequest) {
 
   let topic = "";
   let essay = "";
+  let scope = "";
   try {
     const body = await req.json();
     topic = typeof body?.topic === "string" ? body.topic : "";
     essay = typeof body?.essay === "string" ? body.essay : "";
+    scope = typeof body?.scope === "string" ? body.scope.trim() : "";
   } catch {
     return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
   }
@@ -111,7 +184,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const userContent = `【题目要求】\n${topic.slice(0, 1000)}\n\n【学生作文】\n${essay.slice(0, 4000)}`;
+    const userContent = `${buildScopeGuide(scope)}\n\n【题目要求】\n${topic.slice(0, 1000)}\n\n【学生作文】\n${essay.slice(0, 4000)}`;
 
     const res = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
@@ -146,8 +219,59 @@ export async function POST(req: NextRequest) {
       on_topic?: unknown;
       structure?: unknown;
       language?: unknown;
+      dimensions?: unknown;
+      scores?: unknown;
+      advanced_expressions?: unknown;
+      model_essay?: unknown;
       errors?: unknown;
     };
+
+    const LEVELS = ["优秀", "良好", "一般", "待提高"];
+    const cleanLevel = (v: unknown) =>
+      typeof v === "string" && LEVELS.includes(v.trim()) ? v.trim() : "一般";
+
+    // 细化维度评价清洗
+    const rawDims = (parsed?.dimensions ?? {}) as Record<string, unknown>;
+    const cleanDim = (v: unknown) => {
+      const d = (v ?? {}) as Record<string, unknown>;
+      return {
+        level: cleanLevel(d.level),
+        comment: typeof d.comment === "string" ? d.comment.trim() : "",
+      };
+    };
+    const dimensions = {
+      vocabulary: cleanDim(rawDims.vocabulary),
+      sentence_variety: cleanDim(rawDims.sentence_variety),
+      cohesive_devices: cleanDim(rawDims.cohesive_devices),
+      coherence: cleanDim(rawDims.coherence),
+    };
+
+    // 评分维度清洗
+    const scores = (
+      Array.isArray(parsed?.scores)
+        ? (parsed.scores as Record<string, unknown>[])
+        : []
+    )
+      .map((s) => ({
+        name: typeof s?.name === "string" ? s.name.trim() : "",
+        level: cleanLevel(s?.level),
+        comment: typeof s?.comment === "string" ? s.comment.trim() : "",
+      }))
+      .filter((s) => s.name);
+
+    // 高级表达推荐清洗
+    const advanced_expressions = (
+      Array.isArray(parsed?.advanced_expressions)
+        ? (parsed.advanced_expressions as Record<string, unknown>[])
+        : []
+    )
+      .map((a) => ({
+        original: typeof a?.original === "string" ? a.original.trim() : "",
+        better: typeof a?.better === "string" ? a.better.trim() : "",
+        note: typeof a?.note === "string" ? a.note.trim() : "",
+      }))
+      .filter((a) => a.original && a.better)
+      .slice(0, 5);
 
     // 逐错误清洗：讲解字段 + 练习题都做兜底，防止 AI 脏数据搞崩前端
     const rawErrors = Array.isArray(parsed?.errors)
@@ -188,6 +312,13 @@ export async function POST(req: NextRequest) {
       },
       structure: typeof parsed?.structure === "string" ? parsed.structure : "",
       language: typeof parsed?.language === "string" ? parsed.language : "",
+      dimensions,
+      scores,
+      advanced_expressions,
+      model_essay:
+        typeof parsed?.model_essay === "string"
+          ? parsed.model_essay.trim()
+          : "",
       errors,
     });
   } catch (e) {

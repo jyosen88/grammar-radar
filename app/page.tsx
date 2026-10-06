@@ -36,13 +36,68 @@ interface GuideStep {
   card_codes: string[];
 }
 
+/** 维度评价等级 */
+type EvalLevel = "优秀" | "良好" | "一般" | "待提高";
+
+/** 细化维度评价（词汇/句式/衔接/连贯） */
+interface DimensionEval {
+  level: EvalLevel;
+  comment: string;
+}
+
+/** 按写作范围评分维度的单项评价 */
+interface ScoreItem {
+  name: string;
+  level: EvalLevel;
+  comment: string;
+}
+
+/** 高级表达推荐条目 */
+interface AdvancedExpression {
+  original: string;
+  better: string;
+  note: string;
+}
+
 /** /api/essay 返回的作文分析结果 */
 interface EssayResult {
   onTopic: boolean;
   onTopicComment: string;
   structure: string;
   language: string;
+  dimensions: {
+    vocabulary: DimensionEval;
+    sentence_variety: DimensionEval;
+    cohesive_devices: DimensionEval;
+    coherence: DimensionEval;
+  };
+  scores: ScoreItem[];
+  advancedExpressions: AdvancedExpression[];
+  modelEssay: string;
+  scopeLabel: string;
   errors: AnalysisError[];
+}
+
+/** 写作范围分组下拉选项 */
+const ESSAY_SCOPE_GROUPS: { group: string; items: string[] }[] = [
+  { group: "国内考试", items: ["中考", "高考"] },
+  { group: "单元作文", items: ["七上", "七下", "八上", "八下", "九上", "九下"] },
+  { group: "剑桥英语", items: ["KET", "PET", "FCE", "CAE"] },
+  { group: "出国考试", items: ["雅思", "托福"] },
+];
+
+/** 等级徽章配色 */
+function levelBadgeClass(level: EvalLevel): string {
+  switch (level) {
+    case "优秀":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "良好":
+      return "border-indigo-200 bg-indigo-50 text-indigo-700";
+    case "一般":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    default:
+      return "border-red-200 bg-red-50 text-red-700";
+  }
 }
 
 /** 追问对话消息 */
@@ -108,6 +163,7 @@ export default function Home() {
   const [mode, setMode] = useState<"analyze" | "guide" | "essay" | null>(null);
   // 作文分析（两步流程）：①题目要求 ②作文
   const [topicText, setTopicText] = useState("");
+  const [essayScope, setEssayScope] = useState(""); // 写作范围，空 = 默认中考标准
   const [essayResult, setEssayResult] = useState<EssayResult | null>(null);
   // 分析时的题目+作文快照，供追问使用（用户之后可能改了输入框）
   const [essaySnapshot, setEssaySnapshot] = useState<{
@@ -292,7 +348,7 @@ export default function Home() {
     const res = await fetch("/api/essay", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, essay }),
+      body: JSON.stringify({ topic, essay, scope: essayScope }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error ?? "作文分析失败，请重试");
@@ -300,6 +356,19 @@ export default function Home() {
     const errors: AnalysisError[] = Array.isArray(data?.errors)
       ? data.errors
       : [];
+    const emptyDim: DimensionEval = { level: "一般", comment: "" };
+    const d = data?.dimensions ?? {};
+    const pickDim = (v: unknown): DimensionEval => {
+      const x = (v ?? {}) as Record<string, unknown>;
+      return {
+        level: (["优秀", "良好", "一般", "待提高"] as const).includes(
+          x.level as EvalLevel
+        )
+          ? (x.level as EvalLevel)
+          : "一般",
+        comment: typeof x.comment === "string" ? x.comment : "",
+      };
+    };
     setEssayResult({
       onTopic: data?.on_topic?.is_on_topic !== false,
       onTopicComment:
@@ -308,6 +377,18 @@ export default function Home() {
           : "",
       structure: typeof data?.structure === "string" ? data.structure : "",
       language: typeof data?.language === "string" ? data.language : "",
+      dimensions: {
+        vocabulary: pickDim(d.vocabulary) ?? emptyDim,
+        sentence_variety: pickDim(d.sentence_variety) ?? emptyDim,
+        cohesive_devices: pickDim(d.cohesive_devices) ?? emptyDim,
+        coherence: pickDim(d.coherence) ?? emptyDim,
+      },
+      scores: Array.isArray(data?.scores) ? data.scores : [],
+      advancedExpressions: Array.isArray(data?.advanced_expressions)
+        ? data.advanced_expressions
+        : [],
+      modelEssay: typeof data?.model_essay === "string" ? data.model_essay : "",
+      scopeLabel: essayScope || "中考（默认）",
       errors,
     });
 
@@ -331,10 +412,32 @@ export default function Home() {
 
   /** 把已有作文分析结果拼成纯文本，作为追问时的上下文 */
   function buildAnalysisContext(r: EssayResult): string {
+    const dimLines = [
+      ["词汇丰富度", r.dimensions.vocabulary],
+      ["句式多样性", r.dimensions.sentence_variety],
+      ["衔接词使用", r.dimensions.cohesive_devices],
+      ["逻辑连贯性", r.dimensions.coherence],
+    ] as const;
     const lines = [
+      `写作范围：${r.scopeLabel}`,
       `扣题判断：${r.onTopic ? "切题" : "偏题"}。${r.onTopicComment}`,
       r.structure ? `结构评价：${r.structure}` : "",
       r.language ? `语言评价：${r.language}` : "",
+      r.scores.length
+        ? "评分维度：\n" +
+          r.scores.map((s) => `- ${s.name}：${s.level}。${s.comment}`).join("\n")
+        : "",
+      "细化维度评价：\n" +
+        dimLines
+          .map(([n, d]) => `- ${n}（${d.level}）：${d.comment}`)
+          .join("\n"),
+      r.advancedExpressions.length
+        ? "高级表达推荐：\n" +
+          r.advancedExpressions
+            .map((a) => `- ${a.original} → ${a.better}（${a.note}）`)
+            .join("\n")
+        : "",
+      r.modelEssay ? `参考范文：\n${r.modelEssay}` : "",
       r.errors.length
         ? "语法错误：\n" +
           r.errors
@@ -843,35 +946,57 @@ export default function Home() {
                   （作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文）
                 </span>
               </label>
-              <input
-                ref={topicFileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={(e) => handleImageSelect(e, "topic")}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => topicFileInputRef.current?.click()}
-                disabled={busy}
-                className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <svg
-                  className="h-3.5 w-3.5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                  写作范围
+                  <select
+                    value={essayScope}
+                    onChange={(e) => setEssayScope(e.target.value)}
+                    disabled={busy}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:opacity-60"
+                  >
+                    <option value="">通用（默认中考标准）</option>
+                    {ESSAY_SCOPE_GROUPS.map((g) => (
+                      <optgroup key={g.group} label={g.group}>
+                        {g.items.map((it) => (
+                          <option key={it} value={it}>
+                            {it}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  ref={topicFileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(e) => handleImageSelect(e, "topic")}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => topicFileInputRef.current?.click()}
+                  disabled={busy}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="m21 15-5-5L5 21" />
-                </svg>
-                上传作文题目
-              </button>
+                  <svg
+                    className="h-3.5 w-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <path d="m21 15-5-5L5 21" />
+                  </svg>
+                  上传作文题目
+                </button>
+              </div>
             </div>
             <textarea
               value={topicText}
@@ -1122,6 +1247,77 @@ export default function Home() {
                   </p>
                 </div>
               )}
+
+              {/* 按写作范围的评分维度 */}
+              {essayResult.scores.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-400">
+                    评分维度（{essayResult.scopeLabel}）
+                  </p>
+                  <ul className="space-y-1.5">
+                    {essayResult.scores.map((s, i) => (
+                      <li
+                        key={i}
+                        className="flex items-start gap-2.5 rounded-xl bg-slate-50 px-4 py-2.5"
+                      >
+                        <span
+                          className={`mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold ${levelBadgeClass(s.level)}`}
+                        >
+                          {s.level}
+                        </span>
+                        <p className="text-sm text-slate-700">
+                          <span className="font-semibold text-slate-800">
+                            {s.name}
+                          </span>
+                          {s.comment && (
+                            <span className="text-slate-500">
+                              ：{s.comment}
+                            </span>
+                          )}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* 细化维度评价：词汇/句式/衔接/连贯 */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-400">
+                  细化维度评价
+                </p>
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {(
+                    [
+                      ["词汇丰富度", essayResult.dimensions.vocabulary],
+                      ["句式多样性", essayResult.dimensions.sentence_variety],
+                      ["衔接词使用", essayResult.dimensions.cohesive_devices],
+                      ["逻辑连贯性", essayResult.dimensions.coherence],
+                    ] as const
+                  ).map(([name, d]) => (
+                    <div
+                      key={name}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-800">
+                          {name}
+                        </p>
+                        <span
+                          className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold ${levelBadgeClass(d.level)}`}
+                        >
+                          {d.level}
+                        </span>
+                      </div>
+                      {d.comment && (
+                        <p className="mt-1.5 text-sm whitespace-pre-line text-slate-600">
+                          {d.comment}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* 逐处语法错误 */}
@@ -1222,6 +1418,56 @@ export default function Home() {
                 </ul>
               )}
             </div>
+
+            {/* 高级表达推荐 */}
+            {essayResult.advancedExpressions.length > 0 && (
+              <div className="space-y-3 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  ✨ 高级表达推荐
+                  <span className="ml-2 text-xs font-normal text-slate-400">
+                    在「{essayResult.scopeLabel}」范围内更地道的写法
+                  </span>
+                </h3>
+                <ul className="space-y-2.5">
+                  {essayResult.advancedExpressions.map((a, i) => (
+                    <li
+                      key={i}
+                      className="rounded-xl border border-amber-100 bg-amber-50/60 px-4 py-3"
+                    >
+                      <p className="text-sm">
+                        <span className="text-slate-500 line-through">
+                          {a.original}
+                        </span>
+                        <span className="mx-1.5 text-slate-400">→</span>
+                        <span className="font-medium text-amber-800">
+                          {a.better}
+                        </span>
+                      </p>
+                      {a.note && (
+                        <p className="mt-1 text-xs whitespace-pre-line text-amber-700/80">
+                          {a.note}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* 参考范文 */}
+            {essayResult.modelEssay && (
+              <div className="space-y-3 rounded-2xl border border-emerald-200 bg-white p-5 shadow-sm">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  📝 参考范文
+                  <span className="ml-2 text-xs font-normal text-slate-400">
+                    按「{essayResult.scopeLabel}」的词汇和句式难度重写
+                  </span>
+                </h3>
+                <p className="rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm leading-7 whitespace-pre-wrap text-slate-800">
+                  {essayResult.modelEssay}
+                </p>
+              </div>
+            )}
 
             {/* 追问对话框 */}
             <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
