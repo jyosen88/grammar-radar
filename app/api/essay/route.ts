@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { normalizeExercises, parseLooseJson } from "@/lib/exercise";
+import { normalizeExercises, parseLooseJson, type Exercise } from "@/lib/exercise";
 
-/** 各写作范围的批改约束：词汇难度 / 句式难度 / 评分维度 */
+/** 各写作范围的评分维度与难度基准 */
 function buildScopeGuide(scope: string): string {
   const UNIT = ["七上", "七下", "八上", "八下", "九上", "九下"];
   const isUnit = UNIT.includes(scope);
@@ -15,27 +15,6 @@ function buildScopeGuide(scope: string): string {
   // 未选择范围时默认按中考标准
   const label = scope || "中考";
 
-  let vocab: string;
-  if (isUnit || isZhongkao || isGaokao) {
-    vocab = "以课标词汇为主，可以适当使用少量高级词汇，超出课标太多的用词要提示替换";
-  } else {
-    vocab = `按 ${label} 考试的词汇范围评判${
-      isKetPet ? "，允许并鼓励适当使用略高一级考试的词汇" : ""
-    }`;
-  }
-
-  let sentence: string;
-  if (isUnit || isZhongkao || isKetPet) {
-    sentence =
-      "句式以简单句和基础复合句为主，鼓励在恰当位置使用 1-2 个定语从句、状语从句或倒装句作为亮点，但不能堆砌复杂句式；亮点句要自然融入，不能为了用而用；段落清晰，连接词使用得当";
-    if (isUnit) {
-      sentence += `；本次为单元作文（${label}），还需紧扣该单元的核心词汇、句型和话题来评价`;
-    }
-  } else {
-    sentence =
-      "鼓励使用复杂从句、非谓语动词、倒装、虚拟语气等多种句式，句式多样性是加分项；段落清晰，连接词使用得当";
-  }
-
   let dims: string[];
   if (isIelts) dims = ["任务回应", "连贯与衔接", "词汇资源", "语法多样性与准确性"];
   else if (isToefl) dims = ["语言运用"];
@@ -43,26 +22,45 @@ function buildScopeGuide(scope: string): string {
     dims = ["内容", "沟通达成", "组织结构", "语言"];
   else dims = ["内容", "语言", "结构"];
 
+  const difficulty =
+    isUnit || isZhongkao || isGaokao
+      ? `以${label}课标词汇和句式为基准线而非封顶线：学生准确、自然地使用超出课标的词汇、短语或复杂句式时，一律视为亮点并表扬，严禁因"超纲"压分或要求替换；只有用词错误、搭配不当或生硬炫技时才指出`
+      : `以 ${label} 考试要求为基准线，准确使用更高级别的词汇和句式视为亮点${
+          isKetPet ? "，鼓励适当使用略高一级考试的词汇" : ""
+        }`;
+
   return `【写作范围】${label}
-- 词汇难度要求：${vocab}
-- 句式难度要求：${sentence}
+- 难度定位：${difficulty}
 - 评分维度：${dims.join("、")}（scores 数组必须严格按这些维度给出，名称一字不差）
-- 高级表达推荐：在该范围的词汇范围内，把学生作文中平淡或不够地道的表达换成更地道、更精准的表达（不要超过该范围的水平）
 - 参考范文：严格按该范围的词汇和句式难度要求，重新写一篇高质量范文；词数参照题目要求，没有词数要求时按 ${label} 的典型长度`;
 }
 
-const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用户会给你两样东西：①作文的题目要求（可能包含题目、词数要求、内容要点等）；②学生写的作文。用户还会指定"写作范围"，你的评判标准、范文难度、评分维度都必须严格围绕该范围执行。
+const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用户会给你两样东西：①作文的题目要求（可能包含题目、词数要求、内容要点等）；②学生写的作文。用户还会指定"写作范围"，你的评判标准和范文难度必须围绕该范围执行，但评分上限完全开放——该范围的标准是"基准线"而不是"封顶线"。
 
 你必须依次完成以下分析，不允许跳过：
 
 1.【扣题判断】：对照题目要求，判断作文是否切题。检查：主题是否一致、题目列出的内容要点是否都有覆盖、词数是否明显不达标（如果题目给了词数要求）。
-2.【结构评价】：判断作文结构是否合理：开头/主体/结尾是否完整、段落划分是否清晰、句子之间是否有基本衔接（first/also/finally 等）。
-3.【语言准确性】：总体评价用词、时态、句式的准确性和丰富度。
-4.【逐处语法错误】：找出作文中所有语法错误。判定标准以中国中考、高考英语语法为基础，硬性考点一律判错，严禁以"口语中常见"为由放过。
-5.【细化维度评价】：从词汇丰富度、句式多样性、衔接词使用、逻辑连贯性四个维度分别评价。每个维度必须：引用作文中的具体句子作为证据（用引号标出原文片段），指出好在哪里或问题在哪里，并给出可操作的改进建议。评价标准要与写作范围匹配（如中考不要求虚拟语气，就不要因缺少虚拟语气扣分）。
-6.【按评分维度打分】：按写作范围指定的评分维度逐项给出等级评价（优秀/良好/一般/待提高）和一句理由，理由要结合作文具体内容。
-7.【高级表达推荐】：挑 3-5 处学生写得平淡或不够地道的表达，给出更地道的替换写法。
-8.【参考范文】：按写作范围的要求重写一篇高质量范文。
+2.【一句话总评】：用一句话概括这篇作文的整体水平，要让学生一眼知道自己处在什么位置。要求：①结合写作范围，允许且鼓励指出"超出预期"，如"语言水平远超中考要求，词汇和句式接近高考优秀水平"；②有依据（点明主要优点和最主要短板），不要空泛夸；③只有一句话。
+3.【逐处语法错误】：找出作文中所有语法错误。判定标准以中国中考、高考英语语法为基础，硬性考点一律判错，严禁以"口语中常见"为由放过。
+4.【按评分维度打分】：按写作范围指定的评分维度逐项给出等级评价和一句结合作文具体内容的理由。等级共五档：
+   - 超出预期：作文在这一维度明显超出该学段/该考试的平均要求。例如中考作文中准确、自然地使用高考甚至雅思水平的词汇（如 nevertheless、be accustomed to、sacrifice...for...）、复杂句式（如定语从句叠加非谓语、倒装、强调句、with 复合结构），且没有语法错误、不是生硬炫技。
+   - 优秀：扎实达到该范围的上限要求，表达准确、丰富、自然，仅有极小瑕疵。
+   - 良好：稳稳达到该范围的基本要求，整体正确，丰富度或准确性有少量提升空间。
+   - 一般：基本达到要求但存在明显短板，需指出具体问题。
+   - 待提高：未达到该范围的基本要求，错误较多或影响理解。
+   严禁机械套用"良好"档：凡词汇、句式明显超出该学段平均水平的，必须给"优秀"或"超出预期"；拿不准是优秀还是超出预期时，给超出预期。
+5.【亮点摘录】：把作文中写得好的词汇、短语和句子单独摘录出来，给学生正向反馈：
+   - 每条必须引用作文原文（text），不得改写或编造；
+   - 亮点词汇/短语与亮点句式都可以收录，用 kind 标明"亮点词汇"或"亮点句式"；
+   - 对每条标注其实际水平（level），如"中考内的精彩运用""已达到高考水平""已达到雅思 6.5+ 水平"；
+   - note 用一句中文说明好在哪里；
+   - 至少挑 2 条、最多 8 条；作文确实没有亮点时返回空数组 []。
+6.【明显需要改善的地方】：列出 3-5 条具体、可操作的改进建议，不分类、不写空话：
+   - issue 指出"哪里需要改"：必须具体到作文中的某个原句、某个位置或某个衔接处（可以直接引用原文片段）；
+   - suggestion 说明"改成什么/怎么改"：给出可直接使用的英文改法或具体做法（例如把某个平淡表达替换成什么、在第几句之间加哪个英文过渡词）；
+   - 语法硬伤已经在 errors 中逐条批改，这里侧重"不扣分但可以写得更好"的提升点（词汇升级、句式变化、衔接过渡、内容展开等）；
+   - 如果作文已非常出色、确实凑不满 3 条，有几条写几条，禁止为凑数编造。
+7.【参考范文】：按写作范围的要求重写一篇高质量范文。
 
 每处错误必须做到四件事：
 ① 给出细化到二级/三级的知识点名称（knowledge_point），格式为"大类 - 小类"，必要时"大类 - 小类 - 特殊情形"。严禁只给大类。参照下表细化（表外的知识点也按同样粒度命名）：
@@ -109,19 +107,15 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
     "is_on_topic": true 或 false,
     "comment": "扣题情况说明"
   },
-  "structure": "结构评价：1-3 句话",
-  "language": "语言评价：1-3 句话",
-  "dimensions": {
-    "vocabulary": { "level": "优秀/良好/一般/待提高", "comment": "词汇丰富度评价：引用具体句子，指出问题或亮点，给改进建议" },
-    "sentence_variety": { "level": "...", "comment": "句式多样性评价：引用具体句子，结合写作范围的句式难度要求" },
-    "cohesive_devices": { "level": "...", "comment": "衔接词使用评价：引用具体句子" },
-    "coherence": { "level": "...", "comment": "逻辑连贯性评价：引用具体句子" }
-  },
+  "overall_summary": "一句话总评，概括整体水平",
   "scores": [
-    { "name": "评分维度名（与写作范围指定的维度一致）", "level": "优秀/良好/一般/待提高", "comment": "一句结合作文具体内容的理由" }
+    { "name": "评分维度名（与写作范围指定的维度一致）", "level": "超出预期/优秀/良好/一般/待提高", "comment": "一句结合作文具体内容的理由" }
   ],
-  "advanced_expressions": [
-    { "original": "学生作文中的原表达", "better": "更地道的替换表达", "note": "一句中文说明为什么更好" }
+  "highlights": [
+    { "text": "作文原文中的亮点词汇/短语/句子", "kind": "亮点词汇 或 亮点句式", "level": "中考内的精彩运用 / 已达到高考水平 / 已达到雅思水平 等", "note": "一句中文说明好在哪里" }
+  ],
+  "improvements": [
+    { "issue": "哪里需要改：引用原文片段或指出具体位置", "suggestion": "改成什么/怎么改：给可直接使用的英文或具体做法" }
   ],
   "model_essay": "参考范文（纯英文，按写作范围的词汇和句式难度写）",
   "errors": [
@@ -147,14 +141,15 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
 
 规则：
 1. errors 必须包含全部语法错误；确实没有语法错误时返回空数组 []
-2. original 必须是作文原文中出现的片段，不要改写
+2. original、highlights[].text、improvements[].issue 中引用的部分必须是作文原文中出现的片段，不要改写
 3. 同一个片段有多个错误时分开逐条列出
 4. 每处错误的 exercises 固定给 2 道题
-5. scores 数组的维度和顺序必须与"写作范围"指定的评分维度完全一致
-6. dimensions 四个键都必须给出，level 只能是：优秀、良好、一般、待提高
-7. advanced_expressions 给 3-5 条；original 必须是作文中出现过的表达
-8. model_essay 必须符合写作范围的词汇/句式难度，不要为了炫技超纲
-9. 全部说明文字用中文，original/corrected/better/题目/选项/答案/model_essay 保持英文`;
+5. scores 数组的维度和顺序必须与"写作范围"指定的评分维度完全一致，level 只能是：超出预期、优秀、良好、一般、待提高
+6. 凡准确使用明显超学段的词汇或句式，相关 score 必须给"优秀"或"超出预期"，不得因"超纲"压分
+7. highlights 每条必须真实出自作文原文，并标注具体水平；没有亮点时返回 []
+8. improvements 给 3-5 条，必须具体可操作（指出位置 + 给出改法），禁止"注意衔接""多使用高级句型"这类空话；如缺过渡词，必须指出具体在哪两句/两段之间加哪个英文过渡词
+9. model_essay 必须符合写作范围的词汇/句式难度，不要为了炫技超纲
+10. 全部说明文字用中文，original/corrected/text/题目/选项/答案/suggestion 中的英文/model_essay 保持英文`;
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -200,7 +195,7 @@ export async function POST(req: NextRequest) {
         ],
         response_format: { type: "json_object" },
         temperature: 0,
-        max_tokens: 8000, // 每处错误自带 2 道题，需要较大输出空间
+        max_tokens: 9000, // 每处错误自带 2 道题，外加亮点与改进建议，需要较大输出空间
         stream: false,
       }),
     });
@@ -217,34 +212,17 @@ export async function POST(req: NextRequest) {
     const content: string = data?.choices?.[0]?.message?.content ?? "";
     const parsed = parseLooseJson(content) as {
       on_topic?: unknown;
-      structure?: unknown;
-      language?: unknown;
-      dimensions?: unknown;
+      overall_summary?: unknown;
       scores?: unknown;
-      advanced_expressions?: unknown;
+      highlights?: unknown;
+      improvements?: unknown;
       model_essay?: unknown;
       errors?: unknown;
     };
 
-    const LEVELS = ["优秀", "良好", "一般", "待提高"];
+    const LEVELS = ["超出预期", "优秀", "良好", "一般", "待提高"];
     const cleanLevel = (v: unknown) =>
-      typeof v === "string" && LEVELS.includes(v.trim()) ? v.trim() : "一般";
-
-    // 细化维度评价清洗
-    const rawDims = (parsed?.dimensions ?? {}) as Record<string, unknown>;
-    const cleanDim = (v: unknown) => {
-      const d = (v ?? {}) as Record<string, unknown>;
-      return {
-        level: cleanLevel(d.level),
-        comment: typeof d.comment === "string" ? d.comment.trim() : "",
-      };
-    };
-    const dimensions = {
-      vocabulary: cleanDim(rawDims.vocabulary),
-      sentence_variety: cleanDim(rawDims.sentence_variety),
-      cohesive_devices: cleanDim(rawDims.cohesive_devices),
-      coherence: cleanDim(rawDims.coherence),
-    };
+      typeof v === "string" && LEVELS.includes(v.trim()) ? v.trim() : "良好";
 
     // 评分维度清洗
     const scores = (
@@ -259,18 +237,38 @@ export async function POST(req: NextRequest) {
       }))
       .filter((s) => s.name);
 
-    // 高级表达推荐清洗
-    const advanced_expressions = (
-      Array.isArray(parsed?.advanced_expressions)
-        ? (parsed.advanced_expressions as Record<string, unknown>[])
-        : []
+    // 亮点摘录清洗
+    const highlights = (Array.isArray(parsed?.highlights)
+      ? (parsed.highlights as Record<string, unknown>[])
+      : []
     )
-      .map((a) => ({
-        original: typeof a?.original === "string" ? a.original.trim() : "",
-        better: typeof a?.better === "string" ? a.better.trim() : "",
-        note: typeof a?.note === "string" ? a.note.trim() : "",
+      .map((h) => {
+        const text = typeof h?.text === "string" ? h.text.trim() : "";
+        if (!text) return null;
+        return {
+          text,
+          kind:
+            typeof h?.kind === "string" && h.kind.includes("句式")
+              ? "亮点句式"
+              : "亮点词汇",
+          level: typeof h?.level === "string" ? h.level.trim() : "",
+          note: typeof h?.note === "string" ? h.note.trim() : "",
+        };
+      })
+      .filter((h): h is NonNullable<typeof h> => h !== null)
+      .slice(0, 8);
+
+    // 明显需要改善的地方清洗
+    const improvements = (Array.isArray(parsed?.improvements)
+      ? (parsed.improvements as Record<string, unknown>[])
+      : []
+    )
+      .map((it) => ({
+        issue: typeof it?.issue === "string" ? it.issue.trim() : "",
+        suggestion:
+          typeof it?.suggestion === "string" ? it.suggestion.trim() : "",
       }))
-      .filter((a) => a.original && a.better)
+      .filter((it) => it.issue && it.suggestion)
       .slice(0, 5);
 
     // 逐错误清洗：讲解字段 + 练习题都做兜底，防止 AI 脏数据搞崩前端
@@ -298,7 +296,7 @@ export async function POST(req: NextRequest) {
               : "",
           suggestion:
             typeof raw.suggestion === "string" ? raw.suggestion.trim() : "",
-          exercises: normalizeExercises(raw.exercises, 2),
+          exercises: normalizeExercises(raw.exercises, 2) as Exercise[],
         };
       })
       .filter((e): e is NonNullable<typeof e> => e !== null);
@@ -310,11 +308,13 @@ export async function POST(req: NextRequest) {
         comment:
           typeof rawOnTopic.comment === "string" ? rawOnTopic.comment : "",
       },
-      structure: typeof parsed?.structure === "string" ? parsed.structure : "",
-      language: typeof parsed?.language === "string" ? parsed.language : "",
-      dimensions,
+      overall_summary:
+        typeof parsed?.overall_summary === "string"
+          ? parsed.overall_summary.trim()
+          : "",
       scores,
-      advanced_expressions,
+      highlights,
+      improvements,
       model_essay:
         typeof parsed?.model_essay === "string"
           ? parsed.model_essay.trim()

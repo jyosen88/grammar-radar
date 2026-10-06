@@ -62,13 +62,7 @@ interface GuideStep {
 }
 
 /** 维度评价等级 */
-type EvalLevel = "优秀" | "良好" | "一般" | "待提高";
-
-/** 细化维度评价（词汇/句式/衔接/连贯） */
-interface DimensionEval {
-  level: EvalLevel;
-  comment: string;
-}
+type EvalLevel = "超出预期" | "优秀" | "良好" | "一般" | "待提高";
 
 /** 按写作范围评分维度的单项评价 */
 interface ScoreItem {
@@ -77,27 +71,28 @@ interface ScoreItem {
   comment: string;
 }
 
-/** 高级表达推荐条目 */
-interface AdvancedExpression {
-  original: string;
-  better: string;
+/** 作文亮点摘录条目（亮点词汇 / 亮点句式） */
+interface HighlightItem {
+  text: string;
+  kind: "亮点词汇" | "亮点句式";
+  level: string;
   note: string;
+}
+
+/** 作文改进建议条目 */
+interface ImprovementItem {
+  issue: string;
+  suggestion: string;
 }
 
 /** /api/essay 返回的作文分析结果 */
 interface EssayResult {
   onTopic: boolean;
   onTopicComment: string;
-  structure: string;
-  language: string;
-  dimensions: {
-    vocabulary: DimensionEval;
-    sentence_variety: DimensionEval;
-    cohesive_devices: DimensionEval;
-    coherence: DimensionEval;
-  };
+  overallSummary: string;
   scores: ScoreItem[];
-  advancedExpressions: AdvancedExpression[];
+  highlights: HighlightItem[];
+  improvements: ImprovementItem[];
   modelEssay: string;
   scopeLabel: string;
   errors: AnalysisError[];
@@ -114,6 +109,8 @@ const ESSAY_SCOPE_GROUPS: { group: string; items: string[] }[] = [
 /** 等级徽章配色 */
 function levelBadgeClass(level: EvalLevel): string {
   switch (level) {
+    case "超出预期":
+      return "border-amber-300 bg-gradient-to-r from-amber-100 to-yellow-100 text-amber-800";
     case "优秀":
       return "border-emerald-200 bg-emerald-50 text-emerald-700";
     case "良好":
@@ -123,6 +120,11 @@ function levelBadgeClass(level: EvalLevel): string {
     default:
       return "border-red-200 bg-red-50 text-red-700";
   }
+}
+
+/** 等级徽章展示文案（超出预期加星标） */
+function levelBadgeText(level: EvalLevel): string {
+  return level === "超出预期" ? "🌟 超出预期" : level;
 }
 
 /** 追问对话消息 */
@@ -502,37 +504,50 @@ export default function Home() {
     const errors: AnalysisError[] = Array.isArray(data?.errors)
       ? data.errors
       : [];
-    const emptyDim: DimensionEval = { level: "一般", comment: "" };
-    const d = data?.dimensions ?? {};
-    const pickDim = (v: unknown): DimensionEval => {
-      const x = (v ?? {}) as Record<string, unknown>;
-      return {
-        level: (["优秀", "良好", "一般", "待提高"] as const).includes(
-          x.level as EvalLevel
-        )
-          ? (x.level as EvalLevel)
-          : "一般",
-        comment: typeof x.comment === "string" ? x.comment : "",
-      };
-    };
+    const LEVELS = ["超出预期", "优秀", "良好", "一般", "待提高"];
+    const pickLevel = (v: unknown): EvalLevel =>
+      typeof v === "string" && (LEVELS as string[]).includes(v.trim())
+        ? (v.trim() as EvalLevel)
+        : "良好";
+    const highlights: HighlightItem[] = Array.isArray(data?.highlights)
+      ? data.highlights
+          .map((h: Record<string, unknown>) => ({
+            text: typeof h?.text === "string" ? h.text.trim() : "",
+            kind:
+              typeof h?.kind === "string" && h.kind.includes("句式")
+                ? ("亮点句式" as const)
+                : ("亮点词汇" as const),
+            level: typeof h?.level === "string" ? h.level.trim() : "",
+            note: typeof h?.note === "string" ? h.note.trim() : "",
+          }))
+          .filter((h: HighlightItem) => h.text)
+      : [];
+    const improvements: ImprovementItem[] = Array.isArray(data?.improvements)
+      ? data.improvements
+          .map((it: Record<string, unknown>) => ({
+            issue: typeof it?.issue === "string" ? it.issue.trim() : "",
+            suggestion:
+              typeof it?.suggestion === "string" ? it.suggestion.trim() : "",
+          }))
+          .filter((it: ImprovementItem) => it.issue && it.suggestion)
+      : [];
     setEssayResult({
       onTopic: data?.on_topic?.is_on_topic !== false,
       onTopicComment:
         typeof data?.on_topic?.comment === "string"
           ? data.on_topic.comment
           : "",
-      structure: typeof data?.structure === "string" ? data.structure : "",
-      language: typeof data?.language === "string" ? data.language : "",
-      dimensions: {
-        vocabulary: pickDim(d.vocabulary) ?? emptyDim,
-        sentence_variety: pickDim(d.sentence_variety) ?? emptyDim,
-        cohesive_devices: pickDim(d.cohesive_devices) ?? emptyDim,
-        coherence: pickDim(d.coherence) ?? emptyDim,
-      },
-      scores: Array.isArray(data?.scores) ? data.scores : [],
-      advancedExpressions: Array.isArray(data?.advanced_expressions)
-        ? data.advanced_expressions
+      overallSummary:
+        typeof data?.overall_summary === "string" ? data.overall_summary : "",
+      scores: Array.isArray(data?.scores)
+        ? data.scores.map((s: Record<string, unknown>) => ({
+            name: typeof s?.name === "string" ? s.name : "",
+            level: pickLevel(s?.level),
+            comment: typeof s?.comment === "string" ? s.comment : "",
+          })).filter((s: ScoreItem) => s.name)
         : [],
+      highlights,
+      improvements,
       modelEssay: typeof data?.model_essay === "string" ? data.model_essay : "",
       scopeLabel: essayScope || "中考（默认）",
       errors,
@@ -567,29 +582,24 @@ export default function Home() {
 
   /** 把已有作文分析结果拼成纯文本，作为追问时的上下文 */
   function buildAnalysisContext(r: EssayResult): string {
-    const dimLines = [
-      ["词汇丰富度", r.dimensions.vocabulary],
-      ["句式多样性", r.dimensions.sentence_variety],
-      ["衔接词使用", r.dimensions.cohesive_devices],
-      ["逻辑连贯性", r.dimensions.coherence],
-    ] as const;
     const lines = [
       `写作范围：${r.scopeLabel}`,
       `扣题判断：${r.onTopic ? "切题" : "偏题"}。${r.onTopicComment}`,
-      r.structure ? `结构评价：${r.structure}` : "",
-      r.language ? `语言评价：${r.language}` : "",
+      r.overallSummary ? `一句话总评：${r.overallSummary}` : "",
       r.scores.length
         ? "评分维度：\n" +
           r.scores.map((s) => `- ${s.name}：${s.level}。${s.comment}`).join("\n")
         : "",
-      "细化维度评价：\n" +
-        dimLines
-          .map(([n, d]) => `- ${n}（${d.level}）：${d.comment}`)
-          .join("\n"),
-      r.advancedExpressions.length
-        ? "高级表达推荐：\n" +
-          r.advancedExpressions
-            .map((a) => `- ${a.original} → ${a.better}（${a.note}）`)
+      r.highlights.length
+        ? "亮点摘录：\n" +
+          r.highlights
+            .map((h) => `- 【${h.kind}】${h.text}（${h.level}）：${h.note}`)
+            .join("\n")
+        : "",
+      r.improvements.length
+        ? "明显需要改善的地方：\n" +
+          r.improvements
+            .map((it) => `- ${it.issue} → ${it.suggestion}`)
             .join("\n")
         : "",
       r.modelEssay ? `参考范文：\n${r.modelEssay}` : "",
@@ -1549,23 +1559,13 @@ export default function Home() {
                   </p>
                 )}
               </div>
-              {essayResult.structure && (
-                <div className="rounded-xl bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold text-slate-400">
-                    结构评价
+              {essayResult.overallSummary && (
+                <div className="rounded-xl border border-violet-200 bg-gradient-to-r from-violet-50 to-indigo-50 px-4 py-3">
+                  <p className="text-xs font-semibold text-violet-400">
+                    一句话总评
                   </p>
-                  <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
-                    {essayResult.structure}
-                  </p>
-                </div>
-              )}
-              {essayResult.language && (
-                <div className="rounded-xl bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold text-slate-400">
-                    语言评价
-                  </p>
-                  <p className="mt-1 text-sm whitespace-pre-line text-slate-700">
-                    {essayResult.language}
+                  <p className="mt-1 text-sm font-medium whitespace-pre-line text-violet-900">
+                    {essayResult.overallSummary}
                   </p>
                 </div>
               )}
@@ -1585,7 +1585,7 @@ export default function Home() {
                         <span
                           className={`mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold ${levelBadgeClass(s.level)}`}
                         >
-                          {s.level}
+                          {levelBadgeText(s.level)}
                         </span>
                         <p className="text-sm text-slate-700">
                           <span className="font-semibold text-slate-800">
@@ -1603,44 +1603,46 @@ export default function Home() {
                 </div>
               )}
 
-              {/* 细化维度评价：词汇/句式/衔接/连贯 */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-slate-400">
-                  细化维度评价
-                </p>
-                <div className="grid gap-2.5 sm:grid-cols-2">
-                  {(
-                    [
-                      ["词汇丰富度", essayResult.dimensions.vocabulary],
-                      ["句式多样性", essayResult.dimensions.sentence_variety],
-                      ["衔接词使用", essayResult.dimensions.cohesive_devices],
-                      ["逻辑连贯性", essayResult.dimensions.coherence],
-                    ] as const
-                  ).map(([name, d]) => (
-                    <div
-                      key={name}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-3"
+            </div>
+
+            {/* 亮点摘录 */}
+            {essayResult.highlights.length > 0 && (
+              <div className="space-y-3 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  🌟 亮点摘录
+                  <span className="ml-2 text-xs font-normal text-slate-400">
+                    这些表达写得很出彩
+                  </span>
+                </h3>
+                <ul className="space-y-2.5">
+                  {essayResult.highlights.map((h, i) => (
+                    <li
+                      key={i}
+                      className="rounded-xl border border-amber-100 bg-amber-50/60 px-4 py-3"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold text-slate-800">
-                          {name}
-                        </p>
-                        <span
-                          className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold ${levelBadgeClass(d.level)}`}
-                        >
-                          {d.level}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-amber-200/70 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                          {h.kind}
                         </span>
+                        {h.level && (
+                          <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-xs font-medium text-amber-700">
+                            {h.level}
+                          </span>
+                        )}
                       </div>
-                      {d.comment && (
-                        <p className="mt-1.5 text-sm whitespace-pre-line text-slate-600">
-                          {d.comment}
+                      <p className="mt-1.5 text-sm font-medium text-slate-800">
+                        “{h.text}”
+                      </p>
+                      {h.note && (
+                        <p className="mt-1 text-xs whitespace-pre-line text-amber-700/80">
+                          {h.note}
                         </p>
                       )}
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               </div>
-            </div>
+            )}
 
             {/* 逐处语法错误 */}
             <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1741,35 +1743,31 @@ export default function Home() {
               )}
             </div>
 
-            {/* 高级表达推荐 */}
-            {essayResult.advancedExpressions.length > 0 && (
-              <div className="space-y-3 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+            {/* 明显需要改善的地方 */}
+            {essayResult.improvements.length > 0 && (
+              <div className="space-y-3 rounded-2xl border border-sky-200 bg-white p-5 shadow-sm">
                 <h3 className="text-sm font-semibold text-slate-900">
-                  ✨ 高级表达推荐
+                  🔧 明显需要改善的地方
                   <span className="ml-2 text-xs font-normal text-slate-400">
-                    在「{essayResult.scopeLabel}」范围内更地道的写法
+                    哪里可以改、改成什么
                   </span>
                 </h3>
                 <ul className="space-y-2.5">
-                  {essayResult.advancedExpressions.map((a, i) => (
+                  {essayResult.improvements.map((it, i) => (
                     <li
                       key={i}
-                      className="rounded-xl border border-amber-100 bg-amber-50/60 px-4 py-3"
+                      className="rounded-xl border border-sky-100 bg-sky-50/60 px-4 py-3"
                     >
-                      <p className="text-sm">
-                        <span className="text-slate-500 line-through">
-                          {a.original}
+                      <p className="text-sm text-slate-700">
+                        <span className="font-semibold text-slate-800">
+                          {i + 1}. 哪里改：
                         </span>
-                        <span className="mx-1.5 text-slate-400">→</span>
-                        <span className="font-medium text-amber-800">
-                          {a.better}
-                        </span>
+                        <span className="whitespace-pre-line">{it.issue}</span>
                       </p>
-                      {a.note && (
-                        <p className="mt-1 text-xs whitespace-pre-line text-amber-700/80">
-                          {a.note}
-                        </p>
-                      )}
+                      <p className="mt-1 text-sm whitespace-pre-line text-sky-800">
+                        <span className="font-semibold">✅ 改成：</span>
+                        {it.suggestion}
+                      </p>
                     </li>
                   ))}
                 </ul>
