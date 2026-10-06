@@ -50,6 +50,14 @@ interface SelectedImage {
   name: string;
 }
 
+/** 图片识别结果确认面板（识别后先校对再分析）；past/future 为撤销/重做栈 */
+interface OcrConfirm {
+  target: "topic" | "essay";
+  text: string;
+  past: string[];
+  future: string[];
+}
+
 /** 分步引导的单个步骤 */
 interface GuideStep {
   step: number;
@@ -178,6 +186,10 @@ export default function Home() {
   const [selectedImage, setSelectedImage] = useState<SelectedImage | null>(
     null
   );
+  // 图片识别结果确认面板：识别完成后先让用户校对、可撤销/重做，确认后再分析
+  const [ocrConfirm, setOcrConfirm] = useState<OcrConfirm | null>(null);
+  // 最近一次编辑时间戳：连续输入 700ms 内合并为一个撤销检查点，避免逐字撤销
+  const ocrEditAtRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [busyHint, setBusyHint] = useState(""); // 上传中 / 识别图片中 / AI 分析中
   const [analysisErrors, setAnalysisErrors] = useState<AnalysisError[] | null>(
@@ -458,9 +470,9 @@ export default function Home() {
     else setGIdx(gIdx + 1);
   }
 
-  /** 文本框直接分析 */
-  async function handleAnalyze() {
-    const text = analysisText.trim();
+  /** 文本框直接分析；overrideText 用于图片识别确认后立即分析（绕过异步 setState） */
+  async function handleAnalyze(overrideText?: string) {
+    const text = (overrideText ?? analysisText).trim();
     if (busy || !text) return;
     setBusy(true);
     resetResults();
@@ -1177,10 +1189,13 @@ export default function Home() {
     }
   }
 
-  /** 两步作文分析 */
-  async function handleEssay() {
-    const topic = topicText.trim();
-    const essay = analysisText.trim();
+  /** 两步作文分析；overrideTopic/overrideEssay 用于图片识别确认后立即分析 */
+  async function handleEssay(
+    overrideTopic?: string,
+    overrideEssay?: string
+  ) {
+    const topic = (overrideTopic ?? topicText).trim();
+    const essay = (overrideEssay ?? analysisText).trim();
     if (busy || !topic || !essay) return;
     setBusy(true);
     resetResults();
@@ -1238,16 +1253,101 @@ export default function Home() {
         throw new Error(ocrData?.error ?? "图片识别失败，请重试");
       }
       const text = String(ocrData.text ?? "").trim();
-      if (target === "topic") setTopicText(text);
-      else setAnalysisText(text);
       if (!text) {
         throw new Error("没有从图片中识别到文字，请换一张更清晰的图片");
       }
+      // 不直接进入分析：先把识别结果放进可编辑的确认面板，让用户校对
+      ocrEditAtRef.current = 0;
+      setOcrConfirm({ target, text, past: [], future: [] });
     } catch (e) {
       setAnalysisError(e instanceof Error ? e.message : "处理失败，请重试");
     } finally {
       setBusy(false);
       setBusyHint("");
+    }
+  }
+
+  /** 识别结果面板：编辑文本。连续 700ms 内的修改合并为一个撤销检查点；撤销/重做后的新编辑必定存档 */
+  function handleOcrEdit(next: string) {
+    setOcrConfirm((cur) => {
+      if (!cur || next === cur.text) return cur;
+      const now = Date.now();
+      const checkpoint =
+        now - ocrEditAtRef.current > 700 || cur.future.length > 0;
+      ocrEditAtRef.current = now;
+      return checkpoint
+        ? { ...cur, text: next, past: [...cur.past, cur.text], future: [] }
+        : { ...cur, text: next };
+    });
+  }
+
+  /** 识别结果面板：撤销到上一个编辑状态 */
+  function handleOcrUndo() {
+    setOcrConfirm((cur) => {
+      if (!cur || cur.past.length === 0) return cur;
+      const prev = cur.past[cur.past.length - 1];
+      ocrEditAtRef.current = 0; // 撤销后再编辑，必须产生新检查点
+      return {
+        ...cur,
+        text: prev,
+        past: cur.past.slice(0, -1),
+        future: [cur.text, ...cur.future],
+      };
+    });
+  }
+
+  /** 识别结果面板：重做被撤销的编辑 */
+  function handleOcrRedo() {
+    setOcrConfirm((cur) => {
+      if (!cur || cur.future.length === 0) return cur;
+      const next = cur.future[0];
+      ocrEditAtRef.current = 0;
+      return {
+        ...cur,
+        text: next,
+        past: [...cur.past, cur.text],
+        future: cur.future.slice(1),
+      };
+    });
+  }
+
+  /** 放弃识别结果（图片保留，文字仍可手动输入） */
+  function handleOcrCancel() {
+    ocrEditAtRef.current = 0;
+    setOcrConfirm(null);
+  }
+
+  /** 确认识别文字：回填到对应输入框并关闭面板；返回回填文本供立即分析使用 */
+  function commitOcrText(): { target: "topic" | "essay"; text: string } | null {
+    if (!ocrConfirm) return null;
+    const { target, text } = ocrConfirm;
+    if (target === "topic") setTopicText(text);
+    else setAnalysisText(text);
+    ocrEditAtRef.current = 0;
+    setOcrConfirm(null);
+    return { target, text };
+  }
+
+  /** 仅确认文字，不自动分析（用户之后可继续编辑或自己点分析按钮） */
+  function handleOcrConfirmOnly() {
+    commitOcrText();
+  }
+
+  /** 确认文字并立即进入分析：题目框只回填；作文/单题框按是否已有题目要求自动选择作文分析或单题分析 */
+  async function handleOcrConfirmAnalyze() {
+    if (busy) return;
+    const committed = commitOcrText();
+    if (!committed) return;
+    if (!committed.text.trim()) {
+      setAnalysisError("识别内容为空，请重新上传或手动输入");
+      return;
+    }
+    if (committed.target === "topic") return; // 题目确认后等待作文输入，不自动分析
+    const topic = topicText.trim();
+    if (topic) {
+      await handleEssay(topic, committed.text);
+    } else {
+      await handleAnalyze(committed.text);
     }
   }
 
@@ -1372,12 +1472,87 @@ export default function Home() {
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedImage(null)}
+                onClick={() => {
+                  setSelectedImage(null);
+                  setOcrConfirm(null);
+                }}
                 disabled={busy}
                 className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-100 disabled:opacity-50"
               >
                 ✕ 移除
               </button>
+            </div>
+          )}
+
+          {/* 图片识别结果确认：先校对识别文字（可撤销/重做），确认后再分析 */}
+          {ocrConfirm && (
+            <div className="space-y-2.5 rounded-2xl border border-amber-300 bg-amber-50/70 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-amber-800">
+                  🔍 请确认识别结果
+                  <span className="ml-2 text-xs font-normal text-amber-600">
+                    OCR 可能有误，请校对后再
+                    {ocrConfirm.target === "topic" ? "确认题目" : "分析"}；不修改直接确认则按原文处理
+                  </span>
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleOcrUndo}
+                    disabled={ocrConfirm.past.length === 0}
+                    title="撤销上一次编辑"
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    ↶ 撤销
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOcrRedo}
+                    disabled={ocrConfirm.future.length === 0}
+                    title="重做被撤销的编辑"
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    ↷ 重做
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={ocrConfirm.text}
+                onChange={(e) => handleOcrEdit(e.target.value)}
+                rows={ocrConfirm.target === "topic" ? 2 : 7}
+                autoFocus
+                className="w-full rounded-xl border border-amber-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
+              />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleOcrCancel}
+                  disabled={busy}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOcrConfirmOnly}
+                  disabled={busy}
+                  className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
+                >
+                  仅填入输入框
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOcrConfirmAnalyze}
+                  disabled={busy || !ocrConfirm.text.trim()}
+                  className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {busy
+                    ? "分析中…"
+                    : ocrConfirm.target === "topic"
+                      ? "✓ 确认题目"
+                      : "✓ 确认无误，开始分析"}
+                </button>
+              </div>
             </div>
           )}
 
@@ -1414,7 +1589,7 @@ export default function Home() {
             </button>
             <button
               type="button"
-              onClick={handleEssay}
+              onClick={() => handleEssay()}
               disabled={!canEssay}
               className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -1447,7 +1622,7 @@ export default function Home() {
             </button>
             <button
               type="button"
-              onClick={handleAnalyze}
+              onClick={() => handleAnalyze()}
               disabled={!canAnalyze}
               className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
