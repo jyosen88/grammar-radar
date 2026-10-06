@@ -971,6 +971,155 @@ export default function Home() {
     return lines.filter(Boolean).join("\n");
   }
 
+  /** 无错误句子 / 选择题场景：生成知识点讲解 */
+  async function handleGeneralExplain() {
+    const panel = analyzePanels[-1];
+    if (panel?.explain) {
+      setAnalyzePanels((p) =>
+        p[-1] ? { ...p, [-1]: { ...p[-1], explainOpen: !p[-1].explainOpen } } : p
+      );
+      return;
+    }
+    if (panel?.explainBusy) return;
+
+    setAnalyzePanels((p) => ({
+      ...p,
+      [-1]: {
+        explainBusy: true,
+        explainOpen: true,
+        exercises: p[-1]?.exercises ?? [],
+        picked: p[-1]?.picked ?? [],
+        fillText: p[-1]?.fillText ?? [],
+        checked: p[-1]?.checked ?? [],
+        exBusy: p[-1]?.exBusy ?? false,
+      },
+    }));
+
+    const knowledgePoint = quizSolution?.knowledge_point ?? "";
+    const context = quizSolution
+      ? buildQuizContext(quizSolution)
+      : `题目：${analyzeSnapshot ?? ""}\nAI 判定该句子没有明显语法错误。`;
+
+    try {
+      const res = await fetch("/api/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          knowledge_point: knowledgePoint,
+          context,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "生成讲解失败");
+      setAnalyzePanels((p) =>
+        p[-1]
+          ? {
+              ...p,
+              [-1]: {
+                ...p[-1],
+                explainBusy: false,
+                explainOpen: true,
+                explain: {
+                  knowledge_point: String(data?.knowledge_point ?? ""),
+                  rules: String(data?.rules ?? ""),
+                  examples: String(data?.examples ?? ""),
+                  confusions: String(data?.confusions ?? ""),
+                  common_mistakes: String(data?.common_mistakes ?? ""),
+                },
+              },
+            }
+          : p
+      );
+    } catch (e) {
+      setAnalyzePanels((p) =>
+        p[-1]
+          ? {
+              ...p,
+              [-1]: {
+                ...p[-1],
+                explainBusy: false,
+                explainError:
+                  e instanceof Error ? e.message : "生成讲解失败，请重试",
+              },
+            }
+          : p
+      );
+    }
+  }
+
+  /** 无错误句子 / 选择题场景：生成举一反三练习题 */
+  async function handleGeneralExercises() {
+    const panel = analyzePanels[-1];
+    if (panel?.exBusy) return;
+
+    setAnalyzePanels((p) => ({
+      ...p,
+      [-1]: {
+        explainBusy: p[-1]?.explainBusy ?? false,
+        explainOpen: p[-1]?.explainOpen ?? false,
+        explain: p[-1]?.explain,
+        exBusy: true,
+        exError: undefined,
+        exercises: p[-1]?.exercises ?? [],
+        picked: p[-1]?.picked ?? [],
+        fillText: p[-1]?.fillText ?? [],
+        checked: p[-1]?.checked ?? [],
+      },
+    }));
+
+    const knowledgePoint = quizSolution?.knowledge_point ?? "";
+    const context = quizSolution
+      ? buildQuizContext(quizSolution)
+      : `题目：${analyzeSnapshot ?? ""}\nAI 判定该句子没有明显语法错误。`;
+
+    try {
+      const existed = panel?.exercises ?? [];
+      const res = await fetch("/api/practice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          knowledge_point: knowledgePoint,
+          context,
+          exclude: existed.map((ex) => ex.question),
+          count: 3,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "生成练习题失败");
+      const more = (Array.isArray(data?.exercises) ? data.exercises : []) as Exercise[];
+      if (more.length === 0) throw new Error("AI 没有生成有效的练习题");
+
+      setAnalyzePanels((p) => {
+        const cur = p[-1];
+        if (!cur) return p;
+        return {
+          ...p,
+          [-1]: {
+            ...cur,
+            exBusy: false,
+            exercises: [...cur.exercises, ...more],
+            picked: [...cur.picked, ...more.map(() => null)],
+            fillText: [...cur.fillText, ...more.map(() => "")],
+            checked: [...cur.checked, ...more.map(() => false)],
+          },
+        };
+      });
+    } catch (e) {
+      setAnalyzePanels((p) =>
+        p[-1]
+          ? {
+              ...p,
+              [-1]: {
+                ...p[-1],
+                exBusy: false,
+                exError: e instanceof Error ? e.message : "生成失败，请重试",
+              },
+            }
+          : p
+      );
+    }
+  }
+
   /** 单题分析追问 */
   async function handleAnalyzeFollowup() {
     const question = aChatInput.trim();
@@ -1847,15 +1996,263 @@ export default function Home() {
                 ))}
               </ul>
             </div>
+
+            {/* 选择题模式下也提供知识点讲解与举一反三练习 */}
+            <div className="flex flex-wrap gap-2 pt-2">
+              <button
+                type="button"
+                onClick={handleGeneralExplain}
+                disabled={analyzePanels[-1]?.explainBusy}
+                className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
+              >
+                {analyzePanels[-1]?.explainBusy
+                  ? "正在生成讲解…"
+                  : analyzePanels[-1]?.explain
+                    ? analyzePanels[-1].explainOpen
+                      ? "📕 收起知识点讲解"
+                      : "📖 更多知识点讲解"
+                    : "📖 更多知识点讲解"}
+              </button>
+              {analyzePanels[-1]?.exercises.length === 0 && (
+                <button
+                  type="button"
+                  onClick={handleGeneralExercises}
+                  disabled={analyzePanels[-1]?.exBusy}
+                  className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
+                >
+                  {analyzePanels[-1]?.exBusy
+                    ? "正在生成 3 道练习题…"
+                    : "🎯 举一反三练习"}
+                </button>
+              )}
+            </div>
+
+            {analyzePanels[-1]?.explainError && (
+              <p className="text-xs text-red-600">
+                ⚠️ {analyzePanels[-1].explainError}
+              </p>
+            )}
+            {analyzePanels[-1]?.explainOpen &&
+              (analyzePanels[-1].explainBusy ? (
+                <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-600">
+                  老师正在组织讲解内容…
+                </div>
+              ) : (
+                analyzePanels[-1].explain && (
+                  <KnowledgeExplainView explain={analyzePanels[-1].explain!} />
+                )
+              ))}
+
+            {analyzePanels[-1]?.exError && (
+              <p className="text-xs text-red-600">
+                ⚠️ {analyzePanels[-1].exError}
+              </p>
+            )}
+            {analyzePanels[-1] && analyzePanels[-1].exercises.length > 0 && (
+              <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+                <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
+                  <ExerciseList
+                    exercises={analyzePanels[-1].exercises}
+                    state={analyzePanels[-1]}
+                    onPick={(exIdx, opt) =>
+                      updateAnalyzeExercise(-1, exIdx, {
+                        picked: opt,
+                        checked: true,
+                      })
+                    }
+                    onFill={(exIdx, text) =>
+                      updateAnalyzeExercise(-1, exIdx, { fillText: text })
+                    }
+                    onCheckFill={(exIdx) =>
+                      updateAnalyzeExercise(-1, exIdx, { checked: true })
+                    }
+                  />
+
+                  {analyzePanels[-1].exercises.length > 0 &&
+                    analyzePanels[-1].exercises.every(
+                      (_, j) => analyzePanels[-1].checked[j]
+                    ) && (
+                      <div className="space-y-1.5 border-t border-slate-100 pt-3 text-center">
+                        <button
+                          type="button"
+                          onClick={handleGeneralExercises}
+                          disabled={analyzePanels[-1].exBusy}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {analyzePanels[-1].exBusy ? (
+                            <>
+                              <svg
+                                className="h-3.5 w-3.5 animate-spin"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                              >
+                                <circle
+                                  className="opacity-25"
+                                  cx="12"
+                                  cy="12"
+                                  r="10"
+                                  stroke="currentColor"
+                                  strokeWidth="4"
+                                />
+                                <path
+                                  className="opacity-75"
+                                  fill="currentColor"
+                                  d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                                />
+                              </svg>
+                              正在生成 3 道新题…
+                            </>
+                          ) : (
+                            "🔄 生成更多练习题"
+                          )}
+                        </button>
+                        <p className="text-xs text-slate-400">
+                          已出 {analyzePanels[-1].exercises.length} 道，新题不会与已有题目重复
+                        </p>
+                        {analyzePanels[-1].exError && (
+                          <p className="text-xs text-red-600">
+                            ⚠️ {analyzePanels[-1].exError}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {!quizSolution && analysisErrors && !busy && (
           <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             {analysisErrors.length === 0 ? (
-              <p className="py-2 text-center text-sm text-emerald-700">
-                ✅ 未发现明显语法错误
-              </p>
+              <>
+                <p className="py-2 text-center text-sm text-emerald-700">
+                  ✅ 未发现明显语法错误
+                </p>
+
+                {/* 无错误时也提供知识点讲解与举一反三练习 */}
+                <div className="flex flex-wrap gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={handleGeneralExplain}
+                    disabled={analyzePanels[-1]?.explainBusy}
+                    className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
+                  >
+                    {analyzePanels[-1]?.explainBusy
+                      ? "正在生成讲解…"
+                      : analyzePanels[-1]?.explain
+                        ? analyzePanels[-1].explainOpen
+                          ? "📕 收起知识点讲解"
+                          : "📖 这道题考什么？点这里深入了解"
+                        : "📖 这道题考什么？点这里深入了解"}
+                  </button>
+                  {analyzePanels[-1]?.exercises.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={handleGeneralExercises}
+                      disabled={analyzePanels[-1]?.exBusy}
+                      className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
+                    >
+                      {analyzePanels[-1]?.exBusy
+                        ? "正在生成 3 道练习题…"
+                        : "🎯 举一反三练习"}
+                    </button>
+                  )}
+                </div>
+
+                {analyzePanels[-1]?.explainError && (
+                  <p className="text-xs text-red-600">
+                    ⚠️ {analyzePanels[-1].explainError}
+                  </p>
+                )}
+                {analyzePanels[-1]?.explainOpen &&
+                  (analyzePanels[-1].explainBusy ? (
+                    <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-600">
+                      老师正在组织讲解内容…
+                    </div>
+                  ) : (
+                    analyzePanels[-1].explain && (
+                      <KnowledgeExplainView explain={analyzePanels[-1].explain!} />
+                    )
+                  ))}
+
+                {analyzePanels[-1]?.exError && (
+                  <p className="text-xs text-red-600">
+                    ⚠️ {analyzePanels[-1].exError}
+                  </p>
+                )}
+                {analyzePanels[-1] && analyzePanels[-1].exercises.length > 0 && (
+                  <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+                    <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
+                      <ExerciseList
+                        exercises={analyzePanels[-1].exercises}
+                        state={analyzePanels[-1]}
+                        onPick={(exIdx, opt) =>
+                          updateAnalyzeExercise(-1, exIdx, {
+                            picked: opt,
+                            checked: true,
+                          })
+                        }
+                        onFill={(exIdx, text) =>
+                          updateAnalyzeExercise(-1, exIdx, { fillText: text })
+                        }
+                        onCheckFill={(exIdx) =>
+                          updateAnalyzeExercise(-1, exIdx, { checked: true })
+                        }
+                      />
+
+                      {analyzePanels[-1].exercises.length > 0 &&
+                        analyzePanels[-1].exercises.every(
+                          (_, j) => analyzePanels[-1].checked[j]
+                        ) && (
+                          <div className="space-y-1.5 border-t border-slate-100 pt-3 text-center">
+                            <button
+                              type="button"
+                              onClick={handleGeneralExercises}
+                              disabled={analyzePanels[-1].exBusy}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {analyzePanels[-1].exBusy ? (
+                                <>
+                                  <svg
+                                    className="h-3.5 w-3.5 animate-spin"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                  >
+                                    <circle
+                                      className="opacity-25"
+                                      cx="12"
+                                      cy="12"
+                                      r="10"
+                                      stroke="currentColor"
+                                      strokeWidth="4"
+                                    />
+                                    <path
+                                      className="opacity-75"
+                                      fill="currentColor"
+                                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                                    />
+                                  </svg>
+                                  正在生成 3 道新题…
+                                </>
+                              ) : (
+                                "🔄 生成更多练习题"
+                              )}
+                            </button>
+                            <p className="text-xs text-slate-400">
+                              已出 {analyzePanels[-1].exercises.length} 道，新题不会与已有题目重复
+                            </p>
+                            {analyzePanels[-1].exError && (
+                              <p className="text-xs text-red-600">
+                                ⚠️ {analyzePanels[-1].exError}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <h3 className="text-sm font-semibold text-slate-900">

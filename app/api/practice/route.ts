@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeExercises, parseLooseJson, type Exercise } from "@/lib/exercise";
 
-const buildSystemPrompt = (count: number) => `你是一名中学英语老师。学生在作文或句子里犯了一个具体的语法错误，请围绕这个错误对应的"细化知识点"，为学生生成 ${count} 道变式练习题，帮助他通过练习掌握。
+const buildSystemPrompt = (count: number) => `你是一名中学英语老师。学生正在学习一道英语题，请围绕这道题考查的"细化知识点"，为学生生成 ${count} 道变式练习题，帮助他通过练习掌握。
 
 出题要求：
-1. 题目必须严格考同一个细化知识点（例如知识点是"主谓一致 - 就近一致"，就不要出成普通主谓一致或时态题），但句子、场景要换，不能照抄学生原句
+1. 题目必须严格考同一个细化知识点（例如知识点是"主谓一致 - 就近一致"，就不要出成普通主谓一致或时态题），但句子、场景要换，不能照抄原题
 2. 难度以中国中考英语为标准，句子贴近中学生生活
 3. 题型用单项选择题（选项 2-4 个）或填空题，每道题只考这一个知识点
 4. 每题必须给出正确答案和一句简短解析（讲清为什么，中文）
-5. 不要在题干或解析中暴露学生的错误句子，让学生独立做
+5. 不要在题干或解析中暴露原题的完整句子，让学生独立做
 6. 如果提供了"已经出过的题目"，新题目绝对不能与它们重复，场景和句式都要换新的
 7. 必须恰好生成 ${count} 道题（选择题和填空题可以混用），不多不少
 
@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
   let original = "";
   let corrected = "";
   let reason = "";
+  let context = "";
   let exclude: unknown = [];
   let count = 3;
   try {
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
     original = typeof body?.original === "string" ? body.original : "";
     corrected = typeof body?.corrected === "string" ? body.corrected : "";
     reason = typeof body?.reason === "string" ? body.reason : "";
+    context = typeof body?.context === "string" ? body.context : "";
     exclude = Array.isArray(body?.exclude) ? body.exclude : [];
     if (typeof body?.count === "number" && Number.isFinite(body.count)) {
       count = Math.min(5, Math.max(1, Math.round(body.count)));
@@ -55,7 +57,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
   }
-  if (!knowledgePoint.trim() && !reason.trim()) {
+  if (!knowledgePoint.trim() && !reason.trim() && !context.trim()) {
     return NextResponse.json(
       { error: "缺少知识点信息" },
       { status: 400 }
@@ -67,7 +69,22 @@ export async function POST(req: NextRequest) {
     .map((q) => q.trim())
     .slice(0, 30);
 
-  const userContent = `【细化知识点】${knowledgePoint.slice(0, 200) || reason.slice(0, 200)}
+  let userContent: string;
+  if (context.trim()) {
+    // 无错误句子 / 选择题：基于完整题目上下文和核心考点出题
+    userContent = `【题目上下文】${context.slice(0, 800)}
+【本题核心知识点】${knowledgePoint.slice(0, 200) || "请根据上下文自行提炼"}
+${
+  excludeList.length
+    ? `【已经出过的题目（禁止重复，请换新场景新句式）】\n${excludeList
+        .map((q, i) => `${i + 1}. ${q.slice(0, 300)}`)
+        .join("\n")}\n`
+    : ""
+}
+请恰好生成 ${count} 道变式练习题。`;
+  } else {
+    // 传统错误模式：基于具体错误片段出题
+    userContent = `【细化知识点】${knowledgePoint.slice(0, 200) || reason.slice(0, 200)}
 【学生作文里的错误片段】${original.slice(0, 300)}
 【正确写法】${corrected.slice(0, 300)}
 【错误原因与修改建议】${reason.slice(0, 600)}
@@ -79,6 +96,7 @@ ${
     : ""
 }
 请恰好生成 ${count} 道变式练习题。`;
+  }
 
   try {
     const res = await fetch("https://api.deepseek.com/chat/completions", {

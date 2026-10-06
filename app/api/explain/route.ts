@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const SYSTEM_PROMPT = `你是一名经验丰富的中学英语老师。学生在做题时遇到了一个具体的语法错误，现在想深入学习这个"细化知识点"。请你现场讲解，不允许说"请参考资料"之类的话。
+const SYSTEM_PROMPT = `你是一名经验丰富的中学英语老师。学生正在学习一道英语题，现在想深入了解这道题涉及的核心知识点。请你现场讲解，不允许说"请参考资料"之类的话。
 
 讲解必须包含以下四个部分：
 1. rules（核心规则）：把这个知识点的规则讲清楚、讲完整。规则有多条时分条列出（用 1. 2. 3.），语言适合初中生理解，必要时给出公式化总结（如"either A or B 作主语，谓语随 B"）。
 2. examples（例句）：给出 2-3 个贴近中学生生活的正确例句，关键部分用【】标出，例如 Either you or I 【am】 wrong.
-3. confusions（易混淆点）：对比学生最容易搞混的相近用法（如就近一致 vs 就远一致、a/an 的判断依据是发音不是字母），用"✗ 错误 / ✓ 正确"的形式对比。
+3. confusions（易混淆点）：对比学生最容易搞混的相近用法（如 how far vs how long、就近一致 vs 就远一致、a/an 的判断依据是发音不是字母），用"✗ 错误 / ✓ 正确"的形式对比。
 4. common_mistakes（常见错误）：列出中国学生在这个知识点上最常犯的 2-3 个错误及提醒。
 
 严格按照以下 JSON 格式返回，不要输出任何其他内容：
@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
   let original = "";
   let corrected = "";
   let reason = "";
+  let context = "";
   try {
     const body = await req.json();
     knowledgePoint =
@@ -39,19 +40,30 @@ export async function POST(req: NextRequest) {
     original = typeof body?.original === "string" ? body.original : "";
     corrected = typeof body?.corrected === "string" ? body.corrected : "";
     reason = typeof body?.reason === "string" ? body.reason : "";
+    context = typeof body?.context === "string" ? body.context : "";
   } catch {
     return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
   }
-  if (!knowledgePoint.trim() && !reason.trim()) {
+  if (!knowledgePoint.trim() && !reason.trim() && !context.trim()) {
     return NextResponse.json({ error: "缺少知识点信息" }, { status: 400 });
   }
 
-  const userContent = `【要讲解的细化知识点】${knowledgePoint.slice(0, 200)}
+  let userContent: string;
+  if (context.trim()) {
+    // 无错误句子 / 选择题：结合完整题目上下文讲解核心考点
+    userContent = `【题目上下文】${context.slice(0, 800)}
+【本题核心知识点】${knowledgePoint.slice(0, 200) || "请根据上下文自行提炼"}
+
+请结合这道题讲解核心知识点，例句可以涉及类似场景，但不要照抄题目原句。`;
+  } else {
+    // 传统错误讲解：结合具体错误片段
+    userContent = `【要讲解的细化知识点】${knowledgePoint.slice(0, 200)}
 【学生刚才做错的片段】${original.slice(0, 300)}
 【正确写法】${corrected.slice(0, 300)}
 【该错误的原因与修改建议】${reason.slice(0, 500)}
 
 请结合学生这个具体错误来讲解（例句可以涉及类似场景，但不要照抄错误句）。`;
+  }
 
   try {
     const res = await fetch("https://api.deepseek.com/chat/completions", {
