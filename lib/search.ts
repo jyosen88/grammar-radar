@@ -1,13 +1,13 @@
 /**
  * 单题语法分析的"搜索二次确认"。
  *
- * 流程：前端先从题干提取关键词 → 调用搜索接口拿网页标题+摘要 →
+ * 流程：前端先从题干提取关键词 → 请求本站 /api/search（服务端持 Key 代理调用
+ * 博查 Web Search API，Key 不会暴露给浏览器）拿网页标题+摘要+链接 →
  * 作为参考资料随题目一起发给 /api/analyze，由 DeepSeek 对照后给出一致性结论。
  *
- * 当前为【占位实现】：搜索接口尚未接入，searchReferences 固定返回空数组，
- * 调用方据此降级为纯 AI 分析（AI 返回 reference_check.status = "none"）。
- * 后续接入真实 API（如 Bing Web Search / SerpAPI / 自建检索服务）时，
- * 只需替换 searchReferences 函数体，调用方代码无需改动。
+ * 降级保证：本模块任何一环失败（网络错误 / 超时 / Key 未配置 / 博查报错）
+ * 都返回空数组、绝不抛错，调用方据此降级为纯 AI 分析
+ * （AI 返回 reference_check.status = "none"，前端显示"未找到外部参考"）。
  */
 
 /** 一条外部参考资料（网页标题 + 摘要） */
@@ -59,22 +59,55 @@ export function extractKeywords(text: string): string[] {
   return keywords;
 }
 
+/** 前端等待搜索结果的最长时间（服务端本身 10s 超时，这里再留一点余量） */
+const SEARCH_TIMEOUT_MS = 12000;
+
 /**
- * 搜索外部参考资料（占位实现）。
+ * 搜索外部参考资料：请求本站服务端代理 /api/search（内部调用博查 Web Search API）。
  *
- * 约定（接入真实 API 时必须遵守）：
+ * 约定：
  * - 入参为 extractKeywords 产出的关键词；
- * - 返回最多 5 条 { title, snippet, url? }，snippet 为网页摘要纯文本；
- * - 任何失败（网络错误 / 配额不足 / 未配置 Key）都【不要 reject】，
+ * - 返回最多 5 条 { title, snippet, url }，snippet 为网页摘要/正文纯文本；
+ * - 任何失败（网络错误 / 超时 / Key 未配置 / 博查欠费报错）都【不要 reject】，
  *   返回空数组即可，由调用方降级为纯 AI 分析并标注"未找到外部参考"。
  */
 export async function searchReferences(
-  _keywords: string[]
+  keywords: string[]
 ): Promise<ReferenceItem[]> {
-  // TODO: 后续在此接入具体搜索 API，例如：
-  // const res = await fetch(`https://api.example.com/search?q=${encodeURIComponent(_keywords.join(" "))}`);
-  // if (!res.ok) return [];
-  // return (await res.json()).results.slice(0, 5).map(...);
-  void _keywords;
-  return [];
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keywords }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return [];
+    const data = (await res.json()) as { references?: unknown };
+    if (!Array.isArray(data.references)) return [];
+    return data.references
+      .map((r) => {
+        const item =
+          r && typeof r === "object" ? (r as Record<string, unknown>) : null;
+        if (!item) return null;
+        const title = typeof item.title === "string" ? item.title : "";
+        const snippet = typeof item.snippet === "string" ? item.snippet : "";
+        const url = typeof item.url === "string" ? item.url : undefined;
+        if (!title && !snippet) return null;
+        const ref: ReferenceItem = { title, snippet };
+        if (url) ref.url = url;
+        return ref;
+      })
+      .filter((r): r is ReferenceItem => r !== null)
+      .slice(0, 5);
+  } catch {
+    // 超时 / 网络错误 / JSON 解析失败：静默降级
+    return [];
+  }
 }
