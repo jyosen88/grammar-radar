@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getSupabase, type GrammarCard } from "@/lib/supabase";
 import { Card } from "@/components/GrammarCardView";
 import { SiteNav } from "@/components/SiteNav";
 import type { Exercise } from "@/lib/exercise";
+import type { User } from "@supabase/supabase-js";
 
 /** AI 分析返回的单个语法错误 */
 interface AnalysisError {
@@ -143,6 +144,9 @@ interface AnalyzePanel extends ExerciseState {
 }
 
 export default function Home() {
+  // 当前登录用户（Supabase Auth，null = 未登录）
+  const [user, setUser] = useState<User | null>(null);
+
   // 输入与分析状态
   const [analysisText, setAnalysisText] = useState("");
   const [selectedImage, setSelectedImage] = useState<SelectedImage | null>(
@@ -201,6 +205,43 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const topicFileInputRef = useRef<HTMLInputElement>(null);
 
+  // 监听登录状态（AuthArea 挂在 SiteNav，这里独立同步一份 user）
+  useEffect(() => {
+    const sb = getSupabase();
+    sb.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+    const {
+      data: { subscription },
+    } = sb.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  /** 分析完成后保存记录到 user_records（未登录则跳过） */
+  async function saveRecord(params: {
+    inputText: string;
+    imageUrl?: string | null;
+    analysisResult: unknown;
+    knowledgePoints: string[];
+  }) {
+    if (!user) return;
+    try {
+      await getSupabase()
+        .from("user_records")
+        .insert({
+          user_id: user.id,
+          image_url: params.imageUrl ?? null,
+          input_text: params.inputText.slice(0, 4000),
+          analysis_result: params.analysisResult,
+          knowledge_points: params.knowledgePoints,
+        });
+    } catch {
+      // 保存失败不打断主流程
+    }
+  }
+
   function resetResults() {
     setAnalysisError(null);
     setAnalysisErrors(null);
@@ -242,6 +283,15 @@ export default function Home() {
     setAChatMessages([]);
     setAChatInput("");
     setMode("analyze");
+    // 保存到学习记录
+    saveRecord({
+      inputText: text,
+      imageUrl: selectedImage?.url ?? null,
+      analysisResult: { type: "analyze", errors },
+      knowledgePoints: errors
+        .map((e) => e.knowledge_point ?? "")
+        .filter(Boolean),
+    });
   }
 
   /** 调用 /api/guide 拆题，并预取所有步骤引用的知识点卡片 */
@@ -408,6 +458,15 @@ export default function Home() {
     );
     setMode("essay");
     setEssaySnapshot({ topic, essay });
+    // 保存到学习记录
+    saveRecord({
+      inputText: `【题目】${topic}\n\n【作文】${essay}`,
+      imageUrl: selectedImage?.url ?? null,
+      analysisResult: { type: "essay", result: data },
+      knowledgePoints: errors
+        .map((e) => e.knowledge_point ?? "")
+        .filter(Boolean),
+    });
   }
 
   /** 把已有作文分析结果拼成纯文本，作为追问时的上下文 */
@@ -879,11 +938,11 @@ export default function Home() {
     resetResults();
     setSelectedImage(null);
     try {
-      // 1. 上传到 Supabase Storage 的 error-bank
+      // 1. 上传到 Supabase Storage 的 error-bank（按 用户ID/文件名 归档，未登录归 anonymous/）
       setBusyHint("正在上传图片…");
       const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
       // 时间戳 + 随机数，避免重名
-      const path = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}.${ext}`;
+      const path = `${user ? user.id : "anonymous"}/${Date.now()}-${Math.floor(Math.random() * 1_000_000)}.${ext}`;
       const { error: upErr } = await getSupabase().storage
         .from(ERROR_BUCKET)
         .upload(path, file, { contentType: file.type, upsert: false });

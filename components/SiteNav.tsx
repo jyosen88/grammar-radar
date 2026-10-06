@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { AuthArea } from "./AuthArea";
 
 const ITEMS = [
   { href: "/", label: "语法诊断" },
   { href: "/quiz", label: "随机做题" },
+  { href: "/records", label: "我的记录" },
 ];
 
 /** 全站顶部导航栏，当前页高亮 */
@@ -30,6 +32,9 @@ export function SiteNav() {
             </Link>
           );
         })}
+        <div className="ml-auto">
+          <AuthArea />
+        </div>
       </div>
     </nav>
   );
