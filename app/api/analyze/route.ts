@@ -73,7 +73,7 @@ reason 必须包含两层：① 明确指出错在哪里；② 说明学生为�
 2. 独立分析完成后，再把你的结论逐条与参考资料对照：
    - 结论方向一致或参考资料只是补充说明 → reference_check.status 填 "consistent"，comment 简述参考资料如何支持你的结论；
    - 参考资料与你的分析存在实质分歧（如参考资料说集合名词必须用单数谓语，而你按语境判断应为复数）→ status 填 "difference"，comment 必须以"【AI 分析与外部参考存在差异】"开头，说明分歧点是什么、你为什么坚持自己的判断；
-   - 用户消息标注"（未提供参考资料）"或参考资料与本题无关 → status 填 "none"，comment 固定填"未找到外部参考，以下为纯 AI 分析"。
+   - 用户消息标注"（未提供参考资料）"或参考资料与本题无关、没有明确答案 → status 填 "none"，comment 固定填"未找到明确的外部参考，以下为纯 AI 分析，本题建议核对课本或询问老师"。
 3. 参考资料仅作对照，不允许因为参考资料的说法而动摇你在 errors / quiz 中给出的独立结论；发现分歧时只在 reference_check 中声明，不要改写自己的分析结果。
 
 ============================================================
@@ -310,7 +310,8 @@ export async function POST(req: NextRequest) {
     // —— 外部参考对照结论清洗 ——
     // 根本没给参考资料时，不允许 AI 编造对照结果，强制 none
     let refStatus: "consistent" | "difference" | "none" = "none";
-    let refComment = "未找到外部参考，以下为纯 AI 分析";
+    let refComment =
+      "未找到明确的外部参考，以下为纯 AI 分析，本题建议核对课本或询问老师";
     if (references.length > 0) {
       const rc =
         parsed.reference_check &&
@@ -331,7 +332,7 @@ export async function POST(req: NextRequest) {
         refComment =
           typeof rc?.comment === "string" && rc.comment.trim()
             ? rc.comment.trim()
-            : "外部参考与本题无关，以下为纯 AI 分析";
+            : "外部参考与本题无关或未给出明确答案，以下为纯 AI 分析，建议核对课本或询问老师";
       } else {
         // AI 漏返字段时的诚实兜底：不编造"一致"
         refComment = "外部参考对照结果缺失，以下分析未参考外部资料";

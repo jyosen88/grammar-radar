@@ -5,11 +5,7 @@ import { getSupabase, type GrammarCard } from "@/lib/supabase";
 import { Card } from "@/components/GrammarCardView";
 import { SiteNav } from "@/components/SiteNav";
 import type { Exercise } from "@/lib/exercise";
-import {
-  extractKeywords,
-  searchReferences,
-  type ReferenceItem,
-} from "@/lib/search";
+import { searchReferences, type ReferenceItem } from "@/lib/search";
 import type { User } from "@supabase/supabase-js";
 
 /** AI 分析返回的单个语法错误 */
@@ -317,10 +313,7 @@ export default function Home() {
     setBusyHint("正在搜索外部参考资料…");
     let references: ReferenceItem[] = [];
     try {
-      const keywords = extractKeywords(text);
-      if (keywords.length > 0) {
-        references = await searchReferences(keywords);
-      }
+      references = await searchReferences(text);
     } catch {
       references = [];
     }
@@ -347,7 +340,8 @@ export default function Home() {
           }
         : {
             status: "none",
-            comment: "未找到外部参考，以下为纯 AI 分析",
+            comment:
+              "未找到明确的外部参考，以下为纯 AI 分析，本题建议核对课本或询问老师",
           };
     setReferenceCheck(refCheck);
 
@@ -1740,15 +1734,20 @@ export default function Home() {
                 ? "⚠️ AI 分析与外部参考存在差异"
                 : referenceCheck.status === "consistent"
                   ? "✅ AI 分析已与外部参考对照，结论一致"
-                  : "🔍 未找到外部参考，以下为纯 AI 分析"}
+                  : "🔍 未找到明确的外部参考，以下为纯 AI 分析"}
             </p>
             {referenceCheck.comment &&
               referenceCheck.comment !==
-                "未找到外部参考，以下为纯 AI 分析" && (
+                "未找到明确的外部参考，以下为纯 AI 分析" && (
                 <p className="whitespace-pre-line text-xs leading-5 text-slate-600">
                   {referenceCheck.comment}
                 </p>
               )}
+            {referenceCheck.status === "none" && (
+              <p className="text-xs leading-5 text-slate-600">
+                本题建议核对课本或询问老师。
+              </p>
+            )}
             {referenceItems.length > 0 && (
               <ul className="space-y-0.5 pt-0.5">
                 {referenceItems.map((r, i) => (
