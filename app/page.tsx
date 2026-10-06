@@ -219,26 +219,32 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  /** 分析完成后保存记录到 user_records（未登录则跳过） */
+  /** 分析完成后保存记录到 user_records；未登录则提示“请先登录”，不尝试插入 */
   async function saveRecord(params: {
     inputText: string;
     imageUrl?: string | null;
     analysisResult: unknown;
     knowledgePoints: string[];
   }) {
-    if (!user) return;
-    try {
-      await getSupabase()
-        .from("user_records")
-        .insert({
-          user_id: user.id,
-          image_url: params.imageUrl ?? null,
-          input_text: params.inputText.slice(0, 4000),
-          analysis_result: params.analysisResult,
-          knowledge_points: params.knowledgePoints,
-        });
-    } catch {
-      // 保存失败不打断主流程
+    // 以服务端校验过的最新身份为准，而不是 React state（避免 session 过期还拿着旧 user）
+    const {
+      data: { user: currentUser },
+    } = await getSupabase().auth.getUser();
+    if (!currentUser) {
+      setAnalysisError("记录未保存：请先登录后再进行分析");
+      return;
+    }
+    const { error: insErr } = await getSupabase()
+      .from("user_records")
+      .insert({
+        user_id: currentUser.id, // 显式传 user_id，RLS 的 with check 依赖它
+        image_url: params.imageUrl ?? null,
+        input_text: params.inputText.slice(0, 4000),
+        analysis_result: params.analysisResult,
+        knowledge_points: params.knowledgePoints,
+      });
+    if (insErr) {
+      setAnalysisError(`记录保存失败：${insErr.message}（分析结果不受影响）`);
     }
   }
 
