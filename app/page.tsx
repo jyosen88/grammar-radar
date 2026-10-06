@@ -5,6 +5,11 @@ import { getSupabase, type GrammarCard } from "@/lib/supabase";
 import { Card } from "@/components/GrammarCardView";
 import { SiteNav } from "@/components/SiteNav";
 import type { Exercise } from "@/lib/exercise";
+import {
+  extractKeywords,
+  searchReferences,
+  type ReferenceItem,
+} from "@/lib/search";
 import type { User } from "@supabase/supabase-js";
 
 /** AI 分析返回的单个语法错误 */
@@ -35,6 +40,12 @@ interface QuizSolution {
   knowledge_point: string;
   explanation: string;
   options: QuizOption[];
+}
+
+/** AI 分析与外部搜索参考资料的对照结论 */
+interface ReferenceCheck {
+  status: "consistent" | "difference" | "none";
+  comment: string;
 }
 
 /** 已上传的错题图片（Supabase Storage 公共 URL） */
@@ -177,6 +188,10 @@ export default function Home() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   // 选择题解题模式结果（输入为未做的选择题时使用，与 analysisErrors 互斥）
   const [quizSolution, setQuizSolution] = useState<QuizSolution | null>(null);
+  // 外部参考资料搜索结果（标题+摘要）及 AI 对照结论，解题/批改两种模式共用
+  const [referenceItems, setReferenceItems] = useState<ReferenceItem[]>([]);
+  const [referenceCheck, setReferenceCheck] =
+    useState<ReferenceCheck | null>(null);
   // 单题分析每处错误的"讲解 + 练习"面板，key 为错误下标
   const [analyzePanels, setAnalyzePanels] = useState<
     Record<number, AnalyzePanel>
@@ -271,6 +286,8 @@ export default function Home() {
     setAnalysisError(null);
     setAnalysisErrors(null);
     setQuizSolution(null);
+    setReferenceItems([]);
+    setReferenceCheck(null);
     setAnalyzePanels({});
     setAnalyzeSnapshot(null);
     setAChatMessages([]);
@@ -289,16 +306,50 @@ export default function Home() {
     setGFinished(false);
   }
 
-  /** 调用 /api/analyze 单题语法分析（无卡片，错误自带细化知识点与三段讲解） */
+  /**
+   * 调用 /api/analyze 单题语法分析（无卡片，错误自带细化知识点与三段讲解）。
+   * 分析前先做"搜索二次确认"：提取题干关键词 → 搜外部参考资料（占位接口，
+   * 暂不可用时返回空数组）→ 参考资料随题目一起发给 DeepSeek 对照。
+   */
   async function runAnalysis(text: string) {
+    // 第一步：搜索外部参考资料。接口约定失败不抛错，这里再包一层 try 双保险，
+    // 任何异常都降级为空参考（纯 AI 分析）。
+    setBusyHint("正在搜索外部参考资料…");
+    let references: ReferenceItem[] = [];
+    try {
+      const keywords = extractKeywords(text);
+      if (keywords.length > 0) {
+        references = await searchReferences(keywords);
+      }
+    } catch {
+      references = [];
+    }
+    setReferenceItems(references);
+
+    // 第二步：题目 + 参考资料一起发给 AI，AI 先独立分析再对照
     setBusyHint("AI 正在分析语法…");
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, references }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error ?? "分析失败，请重试");
+
+    // 对照结论（服务端已保证字段存在且合法）
+    const refCheck: ReferenceCheck =
+      data?.reference_check?.status === "consistent" ||
+      data?.reference_check?.status === "difference" ||
+      data?.reference_check?.status === "none"
+        ? {
+            status: data.reference_check.status,
+            comment: String(data.reference_check.comment ?? ""),
+          }
+        : {
+            status: "none",
+            comment: "未找到外部参考，以下为纯 AI 分析",
+          };
+    setReferenceCheck(refCheck);
 
     // 未做的选择题 → 解题模式；已完成句子 → 批改模式
     if (data?.input_type === "quiz" && data.quiz) {
@@ -314,7 +365,11 @@ export default function Home() {
       saveRecord({
         inputText: text,
         imageUrl: selectedImage?.url ?? null,
-        analysisResult: { type: "analyze-quiz", quiz },
+        analysisResult: {
+          type: "analyze-quiz",
+          quiz,
+          reference_check: refCheck,
+        },
         knowledgePoints: quiz.knowledge_point ? [quiz.knowledge_point] : [],
       });
       return;
@@ -334,7 +389,7 @@ export default function Home() {
     saveRecord({
       inputText: text,
       imageUrl: selectedImage?.url ?? null,
-      analysisResult: { type: "analyze", errors },
+      analysisResult: { type: "analyze", errors, reference_check: refCheck },
       knowledgePoints: errors
         .map((e) => e.knowledge_point ?? "")
         .filter(Boolean),
@@ -1658,6 +1713,55 @@ export default function Home() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* 搜索二次确认：外部参考资料对照状态（解题 / 批改两种模式通用） */}
+        {mode === "analyze" && referenceCheck && !busy && (
+          <div
+            className={`space-y-1.5 rounded-xl border px-4 py-3 text-sm ${
+              referenceCheck.status === "difference"
+                ? "border-amber-300 bg-amber-50"
+                : referenceCheck.status === "consistent"
+                  ? "border-emerald-200 bg-emerald-50/70"
+                  : "border-slate-200 bg-slate-50"
+            }`}
+          >
+            <p
+              className={`font-medium ${
+                referenceCheck.status === "difference"
+                  ? "text-amber-800"
+                  : referenceCheck.status === "consistent"
+                    ? "text-emerald-700"
+                    : "text-slate-600"
+              }`}
+            >
+              {referenceCheck.status === "difference"
+                ? "⚠️ AI 分析与外部参考存在差异"
+                : referenceCheck.status === "consistent"
+                  ? "✅ AI 分析已与外部参考对照，结论一致"
+                  : "🔍 未找到外部参考，以下为纯 AI 分析"}
+            </p>
+            {referenceCheck.comment &&
+              referenceCheck.comment !==
+                "未找到外部参考，以下为纯 AI 分析" && (
+                <p className="whitespace-pre-line text-xs leading-5 text-slate-600">
+                  {referenceCheck.comment}
+                </p>
+              )}
+            {referenceItems.length > 0 && (
+              <ul className="space-y-0.5 pt-0.5">
+                {referenceItems.map((r, i) => (
+                  <li
+                    key={i}
+                    className="truncate text-xs text-slate-400"
+                    title={r.snippet}
+                  >
+                    参考 {i + 1}：{r.title || r.snippet.slice(0, 60)}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 

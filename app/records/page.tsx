@@ -32,6 +32,10 @@ interface UserRecord {
         analysis?: string;
       }[];
     };
+    reference_check?: {
+      status?: string;
+      comment?: string;
+    };
     result?: {
       on_topic?: { is_on_topic?: boolean; comment?: string };
       scores?: { name: string; level: string; comment: string }[];
@@ -131,6 +135,10 @@ export default function RecordsPage() {
               const isEssay = r.analysis_result?.type === "essay";
               const isQuiz = r.analysis_result?.type === "analyze-quiz";
               const quiz = isQuiz ? r.analysis_result?.quiz ?? null : null;
+              const refCheck =
+                !isEssay && r.analysis_result?.reference_check
+                  ? r.analysis_result.reference_check
+                  : null;
               const errors =
                 r.analysis_result?.errors ??
                 r.analysis_result?.result?.errors ??
@@ -188,6 +196,25 @@ export default function RecordsPage() {
                         </span>
                       ))}
                     </div>
+                  )}
+
+                  {refCheck && (
+                    <p
+                      title={refCheck.comment}
+                      className={`text-xs ${
+                        refCheck.status === "difference"
+                          ? "text-amber-700"
+                          : refCheck.status === "consistent"
+                            ? "text-emerald-700"
+                            : "text-slate-400"
+                      }`}
+                    >
+                      {refCheck.status === "difference"
+                        ? `⚠️ AI 分析与外部参考存在差异${refCheck.comment ? `：${refCheck.comment}` : ""}`
+                        : refCheck.status === "consistent"
+                          ? "✅ 已与外部参考对照，结论一致"
+                          : "🔍 纯 AI 分析（无外部参考）"}
+                    </p>
                   )}
 
                   <div className="flex items-center gap-3">

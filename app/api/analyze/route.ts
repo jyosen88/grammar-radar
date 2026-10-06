@@ -68,6 +68,15 @@ const SYSTEM_PROMPT = `你是一名专业的英语语法老师。收到学生的
 reason 必须包含两层：① 明确指出错在哪里；② 说明学生为什么会犯这个错。context_note 只在涉及语境或搭配时提供，并附"错误写法 vs 正确写法"对比例句；单纯规则错误返回空字符串 ""。suggestion 告诉学生具体怎么改、以后同类情况怎么判断。original 必须是原文片段，不要改写；多个错误分开逐条列出，不要合并；原文正确的部分不要列为错误。
 
 ============================================================
+【外部参考资料对照规则】用户消息末尾可能附有【外部参考资料】（来自网页搜索的标题与摘要，可能存在质量参差或观点过时）：
+1. 你必须【先完全独立完成自己的分析/解题】，不要先看参考资料下结论，尤其遇到集合名词单复数等需要按语境判断的题目时，以你自己的语法分析为准；
+2. 独立分析完成后，再把你的结论逐条与参考资料对照：
+   - 结论方向一致或参考资料只是补充说明 → reference_check.status 填 "consistent"，comment 简述参考资料如何支持你的结论；
+   - 参考资料与你的分析存在实质分歧（如参考资料说集合名词必须用单数谓语，而你按语境判断应为复数）→ status 填 "difference"，comment 必须以"【AI 分析与外部参考存在差异】"开头，说明分歧点是什么、你为什么坚持自己的判断；
+   - 用户消息标注"（未提供参考资料）"或参考资料与本题无关 → status 填 "none"，comment 固定填"未找到外部参考，以下为纯 AI 分析"。
+3. 参考资料仅作对照，不允许因为参考资料的说法而动摇你在 errors / quiz 中给出的独立结论；发现分歧时只在 reference_check 中声明，不要改写自己的分析结果。
+
+============================================================
 【统一输出格式】严格按照以下 JSON 返回，不要输出任何其他内容。全部说明文字用中文，英文内容保持英文。
 
 quiz 模式必须按此骨架返回：
@@ -77,6 +86,7 @@ quiz 模式必须按此骨架返回：
   "step2_nouns": "",
   "step3_other": "",
   "errors": [],
+  "reference_check": { "status": "consistent / difference / none", "comment": "对照结论说明" },
   "quiz": {
     "answer_letter": "B",
     "answer_text": "正确选项全文",
@@ -105,6 +115,7 @@ correction 模式必须按此骨架返回（errors 中每个错误一个对象�
       "suggestion": "具体怎么改、以后同类情况怎么判断"
     }
   ],
+  "reference_check": { "status": "consistent / difference / none", "comment": "对照结论说明" },
   "quiz": null
 }
 
@@ -120,15 +131,46 @@ export async function POST(req: NextRequest) {
   }
 
   let text: string;
+  let rawReferences: unknown;
   try {
     const body = await req.json();
     text = typeof body?.text === "string" ? body.text : "";
+    rawReferences = body?.references;
   } catch {
     return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
   }
   if (!text.trim()) {
     return NextResponse.json({ error: "请输入要分析的英文内容" }, { status: 400 });
   }
+
+  // 清洗前端搜索到的外部参考资料（最多 5 条，防止超长内容冲掉 prompt 预算）
+  const references = (Array.isArray(rawReferences) ? rawReferences : [])
+    .map((r) => {
+      const item = r && typeof r === "object" ? (r as Record<string, unknown>) : null;
+      if (!item) return null;
+      const title = typeof item.title === "string" ? item.title.trim() : "";
+      const snippet =
+        typeof item.snippet === "string" ? item.snippet.trim() : "";
+      if (!title && !snippet) return null;
+      return {
+        title: title.slice(0, 200),
+        snippet: snippet.slice(0, 500),
+      };
+    })
+    .filter((r): r is { title: string; snippet: string } => r !== null)
+    .slice(0, 5);
+
+  // 拼到用户消息末尾，让 AI 先独立分析再对照
+  const referenceBlock =
+    references.length > 0
+      ? "\n\n【外部参考资料】\n" +
+        references
+          .map(
+            (r, i) =>
+              `${i + 1}. 标题：${r.title}\n   摘要：${r.snippet}`
+          )
+          .join("\n")
+      : '\n\n【外部参考资料】\n（未提供参考资料）';
 
   try {
     const res = await fetch("https://api.deepseek.com/chat/completions", {
@@ -141,7 +183,10 @@ export async function POST(req: NextRequest) {
         model: "deepseek-chat",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: text.slice(0, 4000) },
+          {
+            role: "user",
+            content: text.slice(0, 4000) + referenceBlock,
+          },
         ],
         response_format: { type: "json_object" },
         temperature: 0,
@@ -167,6 +212,7 @@ export async function POST(req: NextRequest) {
       step3_other?: unknown;
       errors?: unknown;
       quiz?: unknown;
+      reference_check?: unknown;
     };
 
     const inputType =
@@ -261,6 +307,37 @@ export async function POST(req: NextRequest) {
     // AI 说 quiz 但数据不完整时，降级为批改模式（errors 通常也为空，前端会显示未发现错误）
     const finalType = inputType === "quiz" && quiz ? "quiz" : "correction";
 
+    // —— 外部参考对照结论清洗 ——
+    // 根本没给参考资料时，不允许 AI 编造对照结果，强制 none
+    let refStatus: "consistent" | "difference" | "none" = "none";
+    let refComment = "未找到外部参考，以下为纯 AI 分析";
+    if (references.length > 0) {
+      const rc =
+        parsed.reference_check &&
+        typeof parsed.reference_check === "object"
+          ? (parsed.reference_check as Record<string, unknown>)
+          : null;
+      const rawStatus = typeof rc?.status === "string" ? rc.status.trim() : "";
+      if (rawStatus === "consistent" || rawStatus === "difference") {
+        refStatus = rawStatus;
+        refComment =
+          typeof rc?.comment === "string" && rc.comment.trim()
+            ? rc.comment.trim()
+            : rawStatus === "consistent"
+              ? "AI 分析与外部参考结论一致"
+              : "AI 分析与外部参考存在差异，请结合两者自行判断";
+      } else if (rawStatus === "none") {
+        refStatus = "none";
+        refComment =
+          typeof rc?.comment === "string" && rc.comment.trim()
+            ? rc.comment.trim()
+            : "外部参考与本题无关，以下为纯 AI 分析";
+      } else {
+        // AI 漏返字段时的诚实兜底：不编造"一致"
+        refComment = "外部参考对照结果缺失，以下分析未参考外部资料";
+      }
+    }
+
     return NextResponse.json({
       input_type: finalType,
       step1_subject_verb:
@@ -272,6 +349,7 @@ export async function POST(req: NextRequest) {
       step3_other:
         typeof parsed.step3_other === "string" ? parsed.step3_other : "",
       errors: finalType === "quiz" ? [] : errors,
+      reference_check: { status: refStatus, comment: refComment.slice(0, 600) },
       quiz,
     });
   } catch (e) {
