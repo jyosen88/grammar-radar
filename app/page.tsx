@@ -20,6 +20,23 @@ interface AnalysisError {
   keywords?: string[]; // 旧字段（单题分析已改用 knowledge_point）
 }
 
+/** 选择题解题模式：单个选项分析 */
+interface QuizOption {
+  letter: string;
+  text: string;
+  is_correct: boolean;
+  analysis: string;
+}
+
+/** 选择题解题模式结果（未做的选择题：正确答案 + 考点 + 逐项分析） */
+interface QuizSolution {
+  answer_letter: string;
+  answer_text: string;
+  knowledge_point: string;
+  explanation: string;
+  options: QuizOption[];
+}
+
 /** 已上传的错题图片（Supabase Storage 公共 URL） */
 interface SelectedImage {
   url: string;
@@ -158,6 +175,8 @@ export default function Home() {
     null
   );
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // 选择题解题模式结果（输入为未做的选择题时使用，与 analysisErrors 互斥）
+  const [quizSolution, setQuizSolution] = useState<QuizSolution | null>(null);
   // 单题分析每处错误的"讲解 + 练习"面板，key 为错误下标
   const [analyzePanels, setAnalyzePanels] = useState<
     Record<number, AnalyzePanel>
@@ -251,6 +270,7 @@ export default function Home() {
   function resetResults() {
     setAnalysisError(null);
     setAnalysisErrors(null);
+    setQuizSolution(null);
     setAnalyzePanels({});
     setAnalyzeSnapshot(null);
     setAChatMessages([]);
@@ -280,9 +300,30 @@ export default function Home() {
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error ?? "分析失败，请重试");
 
+    // 未做的选择题 → 解题模式；已完成句子 → 批改模式
+    if (data?.input_type === "quiz" && data.quiz) {
+      const quiz = data.quiz as QuizSolution;
+      setQuizSolution(quiz);
+      setAnalysisErrors([]);
+      setAnalyzePanels({});
+      setAnalyzeSnapshot(text);
+      setAChatMessages([]);
+      setAChatInput("");
+      setMode("analyze");
+      // 保存到学习记录
+      saveRecord({
+        inputText: text,
+        imageUrl: selectedImage?.url ?? null,
+        analysisResult: { type: "analyze-quiz", quiz },
+        knowledgePoints: quiz.knowledge_point ? [quiz.knowledge_point] : [],
+      });
+      return;
+    }
+
     const errors: AnalysisError[] = Array.isArray(data?.errors)
       ? data.errors
       : [];
+    setQuizSolution(null);
     setAnalysisErrors(errors);
     setAnalyzePanels({});
     setAnalyzeSnapshot(text);
@@ -865,14 +906,30 @@ export default function Home() {
         .join("\n\n");
   }
 
+  /** 把选择题解题结果拼成纯文本，作为追问时的上下文 */
+  function buildQuizContext(quiz: QuizSolution): string {
+    const lines = [
+      `这是一道未作答的选择题，AI 给出了解题结果：`,
+      `正确答案：${quiz.answer_letter}. ${quiz.answer_text}`,
+      quiz.knowledge_point ? `考查知识点：${quiz.knowledge_point}` : "",
+      `题目解析：${quiz.explanation}`,
+      `逐项分析：`,
+      ...quiz.options.map(
+        (o) =>
+          `${o.letter}. ${o.text}（${o.is_correct ? "正确" : "错误"}）：${o.analysis}`
+      ),
+    ];
+    return lines.filter(Boolean).join("\n");
+  }
+
   /** 单题分析追问 */
   async function handleAnalyzeFollowup() {
     const question = aChatInput.trim();
     if (
       aChatBusy ||
       !question ||
-      !analysisErrors ||
-      analyzeSnapshot === null
+      analyzeSnapshot === null ||
+      (!analysisErrors && !quizSolution)
     )
       return;
     const history = aChatMessages;
@@ -885,7 +942,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: analyzeSnapshot,
-          analysis: buildAnalyzeContext(analysisErrors),
+          analysis: quizSolution
+            ? buildQuizContext(quizSolution)
+            : buildAnalyzeContext(analysisErrors ?? []),
           history,
           question,
         }),
@@ -1602,7 +1661,93 @@ export default function Home() {
           </div>
         )}
 
-        {analysisErrors && !busy && (
+        {/* 选择题解题模式：正确答案 + 考点 + 逐项分析 */}
+        {quizSolution && !busy && (
+          <div className="space-y-4 rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+                📝 选择题 · AI 解题
+              </span>
+              {quizSolution.knowledge_point && (
+                <span className="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700">
+                  📌 {quizSolution.knowledge_point}
+                </span>
+              )}
+            </div>
+
+            {/* 正确答案 */}
+            <div className="rounded-xl bg-emerald-50 px-4 py-3">
+              <p className="text-xs font-semibold text-emerald-600">
+                正确答案
+              </p>
+              <p className="mt-1 text-lg font-bold text-emerald-700">
+                {quizSolution.answer_letter}. {quizSolution.answer_text}
+              </p>
+            </div>
+
+            {/* 题目解析 */}
+            {quizSolution.explanation && (
+              <div className="rounded-md bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold text-slate-400">
+                  题目解析
+                </p>
+                <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-700">
+                  {quizSolution.explanation}
+                </p>
+              </div>
+            )}
+
+            {/* 逐项分析 */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-400">
+                逐个选项分析
+              </p>
+              <ul className="space-y-2">
+                {quizSolution.options.map((opt) => (
+                  <li
+                    key={opt.letter}
+                    className={`rounded-lg border px-3 py-2 ${
+                      opt.is_correct
+                        ? "border-emerald-200 bg-emerald-50/60"
+                        : "border-slate-200 bg-slate-50/60"
+                    }`}
+                  >
+                    <p className="flex items-start gap-2 text-sm">
+                      <span
+                        className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                          opt.is_correct
+                            ? "bg-emerald-600 text-white"
+                            : "bg-slate-300 text-white"
+                        }`}
+                      >
+                        {opt.letter}
+                      </span>
+                      <span className="font-medium text-slate-800">
+                        {opt.text}
+                      </span>
+                      <span
+                        className={`ml-auto shrink-0 text-xs font-semibold ${
+                          opt.is_correct
+                            ? "text-emerald-600"
+                            : "text-slate-400"
+                        }`}
+                      >
+                        {opt.is_correct ? "✓ 正确" : "✗ 错误"}
+                      </span>
+                    </p>
+                    {opt.analysis && (
+                      <p className="mt-1 pl-7 text-xs leading-5 text-slate-600">
+                        {opt.analysis}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {!quizSolution && analysisErrors && !busy && (
           <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             {analysisErrors.length === 0 ? (
               <p className="py-2 text-center text-sm text-emerald-700">
@@ -1802,8 +1947,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* 单题分析追问对话框 */}
-        {mode === "analyze" && analysisErrors && !busy && (
+        {/* 单题分析追问对话框（批改 / 解题两种模式通用） */}
+        {mode === "analyze" && (analysisErrors || quizSolution) && !busy && (
           <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
             <h3 className="text-sm font-semibold text-slate-900">
               💬 对结果有疑问？继续问老师

@@ -20,6 +20,18 @@ interface UserRecord {
       reason?: string;
       suggestion?: string;
     }[];
+    quiz?: {
+      answer_letter: string;
+      answer_text: string;
+      knowledge_point?: string;
+      explanation?: string;
+      options?: {
+        letter: string;
+        text: string;
+        is_correct?: boolean;
+        analysis?: string;
+      }[];
+    };
     result?: {
       on_topic?: { is_on_topic?: boolean; comment?: string };
       scores?: { name: string; level: string; comment: string }[];
@@ -117,6 +129,8 @@ export default function RecordsPage() {
           <ul className="space-y-4">
             {records.map((r) => {
               const isEssay = r.analysis_result?.type === "essay";
+              const isQuiz = r.analysis_result?.type === "analyze-quiz";
+              const quiz = isQuiz ? r.analysis_result?.quiz ?? null : null;
               const errors =
                 r.analysis_result?.errors ??
                 r.analysis_result?.result?.errors ??
@@ -134,10 +148,16 @@ export default function RecordsPage() {
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                             isEssay
                               ? "bg-violet-100 text-violet-700"
-                              : "bg-indigo-100 text-indigo-700"
+                              : isQuiz
+                                ? "bg-sky-100 text-sky-700"
+                                : "bg-indigo-100 text-indigo-700"
                           }`}
                         >
-                          {isEssay ? "作文分析" : "单题分析"}
+                          {isEssay
+                            ? "作文分析"
+                            : isQuiz
+                              ? "选择题解析"
+                              : "单题分析"}
                         </span>
                         <span className="text-xs text-slate-400">
                           {formatTime(r.created_at)}
@@ -171,9 +191,16 @@ export default function RecordsPage() {
                   )}
 
                   <div className="flex items-center gap-3">
-                    <p className="text-xs text-slate-400">
-                      共 {errors.length} 处错误
-                    </p>
+                    {quiz ? (
+                      <p className="text-xs text-emerald-700">
+                        ✅ 正确答案：{quiz.answer_letter}
+                        {quiz.answer_text ? `. ${quiz.answer_text}` : ""}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-400">
+                        共 {errors.length} 处错误
+                      </p>
+                    )}
                     <button
                       type="button"
                       onClick={() =>
@@ -185,7 +212,45 @@ export default function RecordsPage() {
                     </button>
                   </div>
 
-                  {isOpen && (
+                  {isOpen && quiz && (
+                    <div className="space-y-2 border-t border-slate-100 pt-3">
+                      {quiz.knowledge_point && (
+                        <p className="text-xs text-violet-600">
+                          📌 考点：{quiz.knowledge_point}
+                        </p>
+                      )}
+                      {quiz.explanation && (
+                        <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm leading-6 whitespace-pre-line text-slate-700">
+                          {quiz.explanation}
+                        </p>
+                      )}
+                      {quiz.options && quiz.options.length > 0 && (
+                        <ul className="space-y-1.5">
+                          {quiz.options.map((o) => (
+                            <li
+                              key={o.letter}
+                              className={`rounded-lg px-3 py-1.5 text-xs ${
+                                o.is_correct
+                                  ? "bg-emerald-50 text-emerald-800"
+                                  : "bg-slate-50 text-slate-600"
+                              }`}
+                            >
+                              <span className="font-semibold">
+                                {o.is_correct ? "✓" : "✗"} {o.letter}. {o.text}
+                              </span>
+                              {o.analysis && (
+                                <span className="mt-0.5 block whitespace-pre-line leading-5 text-slate-500">
+                                  {o.analysis}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+
+                  {isOpen && !quiz && (
                     <ul className="space-y-2 border-t border-slate-100 pt-3">
                       {errors.length === 0 ? (
                         <li className="text-sm text-emerald-700">

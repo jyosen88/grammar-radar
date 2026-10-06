@@ -1,7 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseLooseJson } from "@/lib/exercise";
 
-const SYSTEM_PROMPT = `你是一名专业的英语语法老师。你必须分三步依次检查用户提供的英文句子或短文，不允许跳过任何一步，也不允许在只完成前一两步时就输出结果。
+const SYSTEM_PROMPT = `你是一名专业的英语语法老师。收到学生的输入后，你必须【先判断输入类型】，再按对应模式输出。输入类型有两种：
+
+一、quiz（未做的选择题）：题干中留有未填写的空格（如 ____、___、( )、（  ）等），并带有 A/B/C/D（或更多）选项，或题目要求"选择最佳答案/choose the best answer"。
+二、correction（已完成的句子/短文）：没有空格，是一段写完整的英文，需要查错批改。
+注意：如果空格里已经填了具体单词（学生做过了），按 correction 处理。
+
+============================================================
+【模式一：quiz 解题模式】
+按下面的要求解题：
+1. 选出唯一正确答案，给出选项字母和选项全文；
+2. knowledge_point：本题考查的细化知识点，必须细化到二级/三级（粒度要求同模式二的知识点表），如"非谓语动词 - 动名词作宾语（enjoy/finish/mind/practice + doing）"；
+3. explanation：题目解析，先讲题干句子是什么意思、空格处需要什么语法成分或搭配，再讲正确选项为什么对；
+4. options：逐个选项分析为什么对/为什么错——正确项说明它满足什么语法规则；错误项说明它错在哪、属于什么典型误区，必要时给一个正确用法的小例句。
+此模式只输出 quiz 对象，不输出三步检查字段，errors 返回空数组 []。
+
+============================================================
+【模式二：correction 批改模式】
+你必须分三步依次检查，不允许跳过任何一步，也不允许在只完成前一两步时就输出结果。
 
 第一步【主谓一致】：找出句中所有"主语—谓语"组合，逐一判断谓语在数（单复数）上是否与主语一致。注意：there be 句型的真正主语是 be 动词后面的名词；"a lot of / lots of + 名词" 的单复数取决于后面的名词。
 本步检查集合名词（collective nouns，如 audience, family, team, class, government, committee, group, staff, public 等）时，必须按语义自然度判断，不要机械地要求单数谓语配单数代词：
@@ -12,7 +29,7 @@ const SYSTEM_PROMPT = `你是一名专业的英语语法老师。你必须分三
 第二步【名词检查】：找出句中所有名词，逐一判断：①可数还是不可数；②不可数名词是否被误用了复数或数量词；③可数名词单复数形式是否正确、是否漏加或误加复数标记；④专有名词的大写是否正确（人名、地名、节日、星期月份、语言名等）。
 第三步【其他检查】：检查动词时态、语态、介词搭配、冠词、从句结构、代词等其他语法点。
 
-三步全部完成后，把所有发现的错误合并成一个 JSON 列表返回。三步的分析过程必须分别写入 JSON 的对应字段，禁止省略步骤直接输出 errors。
+三步全部完成后，把所有发现的错误合并成一个 errors 列表。三步的分析过程必须分别写入 JSON 的对应字段，禁止省略步骤直接输出 errors。
 
 每处错误必须给出细化到二级/三级的知识点名称（knowledge_point），格式为"大类 - 小类"，必要时"大类 - 小类 - 特殊情形"。严禁只给大类。参照下表细化（表外的知识点也按同样粒度命名）：
 - 主谓一致 - 语法一致
@@ -47,33 +64,51 @@ const SYSTEM_PROMPT = `你是一名专业的英语语法老师。你必须分三
 - 从句 - 状语从句（时间/条件/让步）
 - 连词与逻辑衔接 / 词性混用 / 拼写
 
-严格按照以下 JSON 格式返回，不要输出任何其他内容：
+批改模式的判定标准以中国中考、高考英语语法为基础：不可数名词加复数、时态错误、冠词错误、该大写没大写等硬性考点一律判错，严禁以"口语中常见"为由放过；但集合名词的单复数要按语义自然度处理，"强调成员用复数（were/their）"是规范且自然的用法，不得误判为错误。errors 必须包含全部错误；如果确实没有语法错误，errors 返回空数组 []，三个步骤字段仍必须填写。
+reason 必须包含两层：① 明确指出错在哪里；② 说明学生为什么会犯这个错。context_note 只在涉及语境或搭配时提供，并附"错误写法 vs 正确写法"对比例句；单纯规则错误返回空字符串 ""。suggestion 告诉学生具体怎么改、以后同类情况怎么判断。original 必须是原文片段，不要改写；多个错误分开逐条列出，不要合并；原文正确的部分不要列为错误。
+
+============================================================
+【统一输出格式】严格按照以下 JSON 返回，不要输出任何其他内容。全部说明文字用中文，英文内容保持英文。
+
+quiz 模式必须按此骨架返回：
 {
-  "step1_subject_verb": "第一步检查过程：逐对列出主语和谓语，给出数上一致与否的判断",
-  "step2_nouns": "第二步检查过程：逐个列出名词，判断可数/不可数、单复数与大写是否正确",
-  "step3_other": "第三步检查过程：列出时态、语态、介词搭配、冠词、从句等的检查结果",
-  "errors": [
-    {
-      "original": "出错的原文片段",
-      "corrected": "修改后的正确写法",
-      "knowledge_point": "细化知识点，如：专有名词 - 大写规则",
-      "reason": "错误原因",
-      "context_note": "语境/搭配解释，或空字符串",
-      "suggestion": "修改建议"
-    }
-  ]
+  "input_type": "quiz",
+  "step1_subject_verb": "",
+  "step2_nouns": "",
+  "step3_other": "",
+  "errors": [],
+  "quiz": {
+    "answer_letter": "B",
+    "answer_text": "正确选项全文",
+    "knowledge_point": "细化到二级/三级的知识点",
+    "explanation": "题目解析：句意 + 空格需要什么 + 正确项为何对",
+    "options": [
+      { "letter": "A", "text": "选项内容", "is_correct": false, "analysis": "为什么错" },
+      { "letter": "B", "text": "选项内容", "is_correct": true, "analysis": "为什么对" }
+    ]
+  }
 }
 
-规则：
-0. 判定标准以中国中考、高考英语语法为基础：不可数名词加复数、时态错误、冠词错误、该大写没大写等硬性考点一律判错，严禁以"口语中常见"为由放过；但集合名词的单复数要按语义自然度处理（见第一步③④），"强调成员用复数（were/their）"是规范且自然的用法，不得误判为错误
-1. errors 必须包含三步中发现的全部错误；如果确实没有语法错误，errors 返回空数组 []，三个步骤字段仍必须填写
-2. reason 必须包含两层内容：① 明确指出错在哪里；② 说明学生为什么会犯这个错
-3. context_note 只在错误涉及语境或搭配问题时提供：给出清晰的解释，并附上"错误写法 vs 正确写法"的对比例句；如果只是单纯的规则错误，返回空字符串 ""
-4. suggestion 告诉学生这一处具体怎么改、以后遇到同类情况用什么方法判断，可给一个简短的同类正确例句
-5. original 必须是原文中出现的片段，不要改写
-6. 如果同一段文字有多个错误，必须分开逐条列出，不要合并
-7. 只列出真正有错误或需要改进的片段，原文正确的部分不要列为错误
-8. 全部说明文字用中文，original/corrected 保持英文`;
+correction 模式必须按此骨架返回（errors 中每个错误一个对象）：
+{
+  "input_type": "correction",
+  "step1_subject_verb": "第一步主谓一致检查过程（无论有无错误都必须写）",
+  "step2_nouns": "第二步名词检查过程（无论有无错误都必须写）",
+  "step3_other": "第三步其他检查过程（无论有无错误都必须写）",
+  "errors": [
+    {
+      "original": "原文中的错误片段，不要改写",
+      "corrected": "修改后的正确片段",
+      "knowledge_point": "大类 - 小类（细化到二级/三级）",
+      "reason": "①明确指出错在哪里；②说明学生为什么会犯这个错",
+      "context_note": "涉及语境或搭配时给错误写法 vs 正确写法规例；单纯规则错误填空字符串",
+      "suggestion": "具体怎么改、以后同类情况怎么判断"
+    }
+  ],
+  "quiz": null
+}
+
+【最重要的铁律】correction 模式下，凡是在 step1_subject_verb / step2_nouns / step3_other 文字分析中指出的错误，必须逐条同步写进 errors 数组，严禁"步骤文字里分析出了错误、errors 却是空数组"。只有全文确实没有任何语法错误时，errors 才允许返回 []，此时三个步骤字段仍要写明检查过程。quiz 模式下 quiz 对象必填，errors 必须为 []。`;
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -110,7 +145,7 @@ export async function POST(req: NextRequest) {
         ],
         response_format: { type: "json_object" },
         temperature: 0,
-        max_tokens: 4000,
+        max_tokens: 6000,
         stream: false,
       }),
     });
@@ -126,11 +161,16 @@ export async function POST(req: NextRequest) {
     const data = await res.json();
     const content: string = data?.choices?.[0]?.message?.content ?? "";
     const parsed = parseLooseJson(content) as {
+      input_type?: unknown;
       step1_subject_verb?: unknown;
       step2_nouns?: unknown;
       step3_other?: unknown;
       errors?: unknown;
+      quiz?: unknown;
     };
+
+    const inputType =
+      parsed?.input_type === "quiz" ? "quiz" : "correction";
 
     // 逐错误清洗，防止 AI 脏数据搞崩前端
     const rawErrors = Array.isArray(parsed?.errors)
@@ -161,7 +201,68 @@ export async function POST(req: NextRequest) {
       })
       .filter((e): e is NonNullable<typeof e> => e !== null);
 
+    // —— quiz 解题模式结果清洗 ——
+    let quiz = null;
+    const rawQuiz =
+      inputType === "quiz" &&
+      parsed.quiz &&
+      typeof parsed.quiz === "object"
+        ? (parsed.quiz as Record<string, unknown>)
+        : null;
+    if (rawQuiz) {
+      const answerLetter =
+        typeof rawQuiz.answer_letter === "string"
+          ? rawQuiz.answer_letter.trim().charAt(0).toUpperCase()
+          : "";
+      const rawOptions = Array.isArray(rawQuiz.options)
+        ? (rawQuiz.options as Record<string, unknown>[])
+        : [];
+      const options = rawOptions
+        .map((o) => {
+          const letter =
+            typeof o.letter === "string"
+              ? o.letter.trim().charAt(0).toUpperCase()
+              : "";
+          const textOpt =
+            typeof o.text === "string" ? o.text.trim() : "";
+          const analysis =
+            typeof o.analysis === "string" ? o.analysis.trim() : "";
+          if (!/^[A-Z]$/.test(letter) || !textOpt) return null;
+          return {
+            letter,
+            text: textOpt,
+            // 以 answer_letter 为唯一准绳，避免 AI 自相矛盾
+            is_correct: letter === answerLetter,
+            analysis,
+          };
+        })
+        .filter((o): o is NonNullable<typeof o> => o !== null);
+
+      const hasCorrect = options.some((o) => o.is_correct);
+      if (/^[A-Z]$/.test(answerLetter) && options.length >= 2 && hasCorrect) {
+        quiz = {
+          answer_letter: answerLetter,
+          answer_text:
+            typeof rawQuiz.answer_text === "string"
+              ? rawQuiz.answer_text.trim()
+              : options.find((o) => o.is_correct)?.text ?? "",
+          knowledge_point:
+            typeof rawQuiz.knowledge_point === "string"
+              ? rawQuiz.knowledge_point.trim()
+              : "",
+          explanation:
+            typeof rawQuiz.explanation === "string"
+              ? rawQuiz.explanation.trim()
+              : "",
+          options,
+        };
+      }
+    }
+    // AI 说 quiz 但数据不完整时，降级为批改模式（errors 通常也为空，前端会显示未发现错误）
+    const finalType = inputType === "quiz" && quiz ? "quiz" : "correction";
+
     return NextResponse.json({
+      input_type: finalType,
       step1_subject_verb:
         typeof parsed.step1_subject_verb === "string"
           ? parsed.step1_subject_verb
@@ -170,7 +271,8 @@ export async function POST(req: NextRequest) {
         typeof parsed.step2_nouns === "string" ? parsed.step2_nouns : "",
       step3_other:
         typeof parsed.step3_other === "string" ? parsed.step3_other : "",
-      errors,
+      errors: finalType === "quiz" ? [] : errors,
+      quiz,
     });
   } catch (e) {
     return NextResponse.json(
