@@ -1388,7 +1388,7 @@ export default function AnalyzeTool({
             <label className="block text-sm font-medium text-slate-700">① 题目要求</label>
             {/* 说明文字：小字灰色，单独一行 */}
             <p className="text-sm text-gray-500">
-              作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文
+              （作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文）
             </p>
             {/* 工具行：手机端上下排列各占满整行，sm 以上并排（下拉框固定宽、按钮自适应） */}
             <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
