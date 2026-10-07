@@ -1484,7 +1484,7 @@ export default function AnalyzeTool({
             </h1>
             <p className="mt-1 text-sm text-slate-500">
               {variant === "essay"
-                ? "输入作文题目要求和你的作文，AI 按所选写作类型批改、逐处纠错并生成针对性练习"
+                ? "输入作文题目要求和你的作文，AI 按所选写作类型批改"
                 : "粘贴英文句子，或上传错题图片，AI 自动找出语法错误、讲解细化知识点并生成针对性练习"}
             </p>
           </div>
