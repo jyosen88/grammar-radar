@@ -1396,7 +1396,7 @@ export default function AnalyzeTool({
                 value={essayScope}
                 onChange={(e) => setEssayScope(e.target.value)}
                 disabled={busy}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:opacity-60 sm:w-40"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-center text-sm font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:opacity-60 sm:w-40 [&>option]:text-left [&>optgroup]:text-left"
               >
                 <option value="">写作类型</option>
                 {ESSAY_SCOPE_GROUPS.map((g) => (
