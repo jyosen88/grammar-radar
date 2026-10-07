@@ -43,6 +43,36 @@ export default function HomePage() {
                   "radial-gradient(circle, rgba(253,248,255,0.98) 0%, rgba(243,232,255,0.75) 45%, rgba(243,232,255,0) 72%)",
               }}
             />
+            {/* 细亮光圈：环绕在 G 外围（半径大于 G 图形，不覆盖字母），
+                亮度自上而下渐变——上半圈明显、下半圈隐没 */}
+            <svg
+              aria-hidden
+              viewBox="0 0 100 100"
+              className="pointer-events-none absolute left-1/2 top-1/2 w-[42%] -translate-x-1/2 -translate-y-1/2 overflow-visible"
+            >
+              <defs>
+                <linearGradient id="ringFade" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+                  <stop offset="38%" stopColor="#ffffff" stopOpacity="0.55" />
+                  <stop offset="72%" stopColor="#ffffff" stopOpacity="0.12" />
+                  <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+                </linearGradient>
+                <filter id="ringSoft" x="-60%" y="-60%" width="220%" height="220%">
+                  <feGaussianBlur stdDeviation="2.4" />
+                </filter>
+              </defs>
+              {/* 外发光层：粗描边 + 高斯模糊 */}
+              <circle
+                cx="50" cy="50" r="47" fill="none"
+                stroke="url(#ringFade)" strokeWidth="7"
+                filter="url(#ringSoft)" opacity="0.7"
+              />
+              {/* 清晰细环 */}
+              <circle
+                cx="50" cy="50" r="47" fill="none"
+                stroke="url(#ringFade)" strokeWidth="2.2"
+              />
+            </svg>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/logo.png"
