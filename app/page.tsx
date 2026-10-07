@@ -12,46 +12,14 @@ export default function HomePage() {
   return (
     <main className="flex min-h-screen w-full flex-col items-center justify-center bg-gradient-to-b from-violet-100 via-blue-50 to-white px-4 py-12">
       <div className="mx-auto flex w-full max-w-md flex-col items-center">
-        {/* 品牌区：Logo + 主副标题（Logo 为占位 SVG，稍后替换成 public/ 里的真实图片） */}
+        {/* 品牌区：Logo + 主副标题（Logo 图片位于 public/logo.png，直接展示原图） */}
         <div className="flex flex-col items-center gap-4">
-          <div className="flex h-28 w-28 items-center justify-center rounded-full bg-white shadow-[0_8px_40px_rgba(99,102,241,0.35)] ring-1 ring-white sm:h-32 sm:w-32">
-            <svg
-              viewBox="0 0 64 64"
-              fill="none"
-              className="h-20 w-20 sm:h-24 sm:w-24"
-              aria-hidden="true"
-            >
-              <defs>
-                <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#1e3a8a" />
-                  <stop offset="55%" stopColor="#4f46e5" />
-                  <stop offset="100%" stopColor="#7c3aed" />
-                </linearGradient>
-              </defs>
-              {/* G 形圆弧 + 雷达扫描线与信号点 */}
-              <circle
-                cx="32"
-                cy="32"
-                r="22"
-                stroke="url(#logoGrad)"
-                strokeWidth="7"
-                strokeLinecap="round"
-                strokeDasharray="102 139"
-                transform="rotate(128 32 32)"
-              />
-              <circle cx="32" cy="32" r="6" fill="url(#logoGrad)" />
-              <line
-                x1="32"
-                y1="32"
-                x2="47"
-                y2="17"
-                stroke="url(#logoGrad)"
-                strokeWidth="6"
-                strokeLinecap="round"
-              />
-              <circle cx="48" cy="16" r="3.6" fill="#7c3aed" />
-            </svg>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.png"
+            alt="Grammar Radar 语法雷达"
+            className="h-20 w-20 object-contain sm:h-24 sm:w-24"
+          />
 
           <h1 className="text-4xl font-bold tracking-tight text-blue-950">
             Grammar-Radar
