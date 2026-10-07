@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getSupabase, getStoredSession } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
+import { Mascot, type MascotMood } from "@/components/Mascot";
 import type { Exercise } from "@/lib/exercise";
 import { searchReferences, type ReferenceItem } from "@/lib/search";
 import type { User } from "@supabase/supabase-js";
@@ -308,6 +309,10 @@ export default function AnalyzeTool({
     useState<ReferenceCheck | null>(null);
   // 外部参考对照横幅详情默认收起，点击标题展开
   const [refBannerOpen, setRefBannerOpen] = useState(false);
+  // 吉祥物"小雷达"情绪：答对笑、答错思考，几秒后回到平静
+  const [mascotMood, setMascotMood] = useState<MascotMood>("idle");
+  const [mascotTick, setMascotTick] = useState(0);
+  const mascotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 单题分析每处错误的"讲解 + 练习"面板，key 为错误下标
   const [analyzePanels, setAnalyzePanels] = useState<
     Record<number, AnalyzePanel>
@@ -402,6 +407,7 @@ export default function AnalyzeTool({
     setReferenceItems([]);
     setReferenceCheck(null);
     setRefBannerOpen(false);
+    setMascotMood("idle");
     setAnalyzePanels({});
     setAnalyzeSnapshot(null);
     setAChatMessages([]);
@@ -770,6 +776,22 @@ export default function AnalyzeTool({
     }
   }
 
+  /** 吉祥物情绪闪现：答对笑、答错思考，3.5 秒后回到平静；tick 用于重放动画 */
+  function flashMascot(mood: "happy" | "thinking") {
+    setMascotMood(mood);
+    setMascotTick((t) => t + 1);
+    if (mascotTimer.current) clearTimeout(mascotTimer.current);
+    mascotTimer.current = setTimeout(() => setMascotMood("idle"), 3500);
+  }
+
+  /** 按用户答案与标准答案判定吉祥物反应 */
+  function judgeMascot(answer: string | undefined, user: string | null | undefined) {
+    if (!answer) return;
+    const u = (user ?? "").trim().toLowerCase();
+    if (!u) return;
+    flashMascot(u === answer.trim().toLowerCase() ? "happy" : "thinking");
+  }
+
   /** 更新某处错误面板里某道题的作答状态 */
   function updatePanelExercise(
     errIdx: number,
@@ -780,6 +802,13 @@ export default function AnalyzeTool({
       checked: boolean;
     }>
   ) {
+    // 提交作答时让吉祥物"小雷达"做出反应（作文分析的练习题在 essayResult.errors 里）
+    if (patch.checked) {
+      judgeMascot(
+        essayResult?.errors[errIdx]?.exercises?.[exIdx]?.answer,
+        patch.picked !== undefined ? patch.picked : practicePanels[errIdx]?.fillText[exIdx]
+      );
+    }
     setPracticePanels((p) => {
       const panel = p[errIdx];
       if (!panel) return p;
@@ -806,6 +835,13 @@ export default function AnalyzeTool({
       checked: boolean;
     }>
   ) {
+    // 提交作答时让吉祥物"小雷达"做出反应（单题分析的练习题在 analyzePanels 里）
+    if (patch.checked) {
+      judgeMascot(
+        analyzePanels[errIdx]?.exercises[exIdx]?.answer,
+        patch.picked !== undefined ? patch.picked : analyzePanels[errIdx]?.fillText[exIdx]
+      );
+    }
     setAnalyzePanels((p) => {
       const panel = p[errIdx];
       if (!panel) return p;
@@ -2711,6 +2747,8 @@ export default function AnalyzeTool({
           </div>
         )}
       </main>
+      {/* 吉祥物"小雷达"：页面右下角，答对笑 / 答错思考（key 变化重放动画） */}
+      <Mascot mood={mascotMood} key={mascotTick} />
     </div>
   );
 }
