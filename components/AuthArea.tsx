@@ -68,7 +68,7 @@ export function AuthArea({ onAuthChange }: AuthAreaProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100"
+        className="rounded-2xl border border-[#e7defb] bg-[#f5f1fe] px-2.5 py-1 text-xs font-medium text-[#7c55d8] transition hover:bg-[#ece4fd]"
       >
         登录 / 注册
       </button>

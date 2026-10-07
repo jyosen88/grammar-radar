@@ -25,10 +25,10 @@ export function SiteNav() {
               <Link
                 key={href}
                 href={href}
-                className={`flex items-center justify-center whitespace-normal text-center text-[13px] font-medium leading-tight rounded-lg border px-1 py-2.5 transition md:whitespace-nowrap md:px-3.5 md:py-1.5 md:text-sm ${
+                className={`flex items-center justify-center whitespace-normal text-center text-[13px] font-medium leading-tight rounded-2xl border px-1 py-2.5 transition md:whitespace-nowrap md:px-3.5 md:py-1.5 md:text-sm ${
                   active
-                    ? "border-indigo-600 bg-indigo-600 text-white shadow-sm"
-                    : "border-slate-200 bg-slate-100 text-slate-600 hover:border-slate-300 hover:bg-slate-200 hover:text-slate-900"
+                    ? "border-transparent bg-gradient-to-r from-[#1a2388] to-[#9c5cf0] text-white shadow-[0_8px_20px_-10px_rgba(93,62,220,0.6)]"
+                    : "border-transparent bg-[#f0f2fb] text-slate-600 hover:bg-[#e6e9f8] hover:text-slate-800"
                 }`}
               >
                 {label}
