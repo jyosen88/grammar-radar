@@ -1493,7 +1493,7 @@ export default function AnalyzeTool({
           {variant === "essay" && (
           <div className="space-y-2">
             {/* 标题独立一行 */}
-            <label className="block text-sm font-medium text-slate-700">① 题目要求</label>
+            <label className="block text-xl font-semibold text-slate-800">① 题目要求</label>
             {/* 说明文字：小字灰色，单独一行 */}
             <p className="text-sm text-gray-500">
               （作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文）
@@ -1547,7 +1547,7 @@ export default function AnalyzeTool({
 
           {/* 第二步：作文 / 句子输入 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">
+            <label className="text-xl font-semibold text-slate-800">
               {variant === "essay" ? "② 我的作文" : "① 我的句子"}
             </label>
             <textarea
