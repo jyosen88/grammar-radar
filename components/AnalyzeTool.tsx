@@ -306,6 +306,8 @@ export default function AnalyzeTool({
   const [referenceItems, setReferenceItems] = useState<ReferenceItem[]>([]);
   const [referenceCheck, setReferenceCheck] =
     useState<ReferenceCheck | null>(null);
+  // 外部参考对照横幅详情默认收起，点击标题展开
+  const [refBannerOpen, setRefBannerOpen] = useState(false);
   // 单题分析每处错误的"讲解 + 练习"面板，key 为错误下标
   const [analyzePanels, setAnalyzePanels] = useState<
     Record<number, AnalyzePanel>
@@ -399,6 +401,7 @@ export default function AnalyzeTool({
     setQuizSolution(null);
     setReferenceItems([]);
     setReferenceCheck(null);
+    setRefBannerOpen(false);
     setAnalyzePanels({});
     setAnalyzeSnapshot(null);
     setAChatMessages([]);
@@ -453,6 +456,7 @@ export default function AnalyzeTool({
               "未找到明确的外部参考，以下为纯 AI 分析，本题建议核对课本或询问老师",
           };
     setReferenceCheck(refCheck);
+    setRefBannerOpen(false);
 
     // 未做的选择题 → 解题模式；已完成句子 → 批改模式
     if (data?.input_type === "quiz" && data.quiz) {
@@ -2047,7 +2051,7 @@ export default function AnalyzeTool({
           </div>
         )}
 
-        {/* 搜索二次确认：外部参考资料对照状态（解题 / 批改两种模式通用） */}
+        {/* 搜索二次确认：外部参考资料对照状态（解题 / 批改两种模式通用，详情默认收起） */}
         {mode === "analyze" && referenceCheck && !busy && (
           <div
             className={`space-y-1.5 rounded-xl border px-4 py-3 text-sm ${
@@ -2058,8 +2062,10 @@ export default function AnalyzeTool({
                   : "border-slate-200 bg-slate-50"
             }`}
           >
-            <p
-              className={`font-medium ${
+            <button
+              type="button"
+              onClick={() => setRefBannerOpen((v) => !v)}
+              className={`flex w-full items-center justify-between gap-2 text-left font-medium ${
                 referenceCheck.status === "difference"
                   ? "text-amber-800"
                   : referenceCheck.status === "consistent"
@@ -2067,36 +2073,49 @@ export default function AnalyzeTool({
                     : "text-slate-600"
               }`}
             >
-              {referenceCheck.status === "difference"
-                ? "⚠️ AI 分析与外部参考存在差异"
-                : referenceCheck.status === "consistent"
-                  ? "✅ AI 分析已与外部参考对照，结论一致"
-                  : "🔍 未找到明确的外部参考，以下为纯 AI 分析"}
-            </p>
-            {referenceCheck.comment &&
-              referenceCheck.comment !==
-                "未找到明确的外部参考，以下为纯 AI 分析" && (
-                <p className="whitespace-pre-line text-xs leading-5 text-slate-600">
-                  {referenceCheck.comment}
-                </p>
-              )}
-            {referenceCheck.status === "none" && (
-              <p className="text-xs leading-5 text-slate-600">
-                本题建议核对课本或询问老师。
-              </p>
-            )}
-            {referenceItems.length > 0 && (
-              <ul className="space-y-0.5 pt-0.5">
-                {referenceItems.map((r, i) => (
-                  <li
-                    key={i}
-                    className="truncate text-xs text-slate-400"
-                    title={r.snippet}
-                  >
-                    参考 {i + 1}：{r.title || r.snippet.slice(0, 60)}
-                  </li>
-                ))}
-              </ul>
+              <span>
+                {referenceCheck.status === "difference"
+                  ? "⚠️ AI 分析与外部参考存在差异"
+                  : referenceCheck.status === "consistent"
+                    ? "✅ AI 分析已与外部参考对照，结论一致"
+                    : "🔍 未找到明确的外部参考，以下为纯 AI 分析"}
+              </span>
+              <span
+                className={`shrink-0 text-xs text-slate-400 transition-transform ${
+                  refBannerOpen ? "rotate-90" : ""
+                }`}
+              >
+                ▶
+              </span>
+            </button>
+            {refBannerOpen && (
+              <>
+                {referenceCheck.comment &&
+                  referenceCheck.comment !==
+                    "未找到明确的外部参考，以下为纯 AI 分析" && (
+                    <p className="whitespace-pre-line text-xs leading-5 text-slate-600">
+                      {referenceCheck.comment}
+                    </p>
+                  )}
+                {referenceCheck.status === "none" && (
+                  <p className="text-xs leading-5 text-slate-600">
+                    本题建议核对课本或询问老师。
+                  </p>
+                )}
+                {referenceItems.length > 0 && (
+                  <ul className="space-y-0.5 pt-0.5">
+                    {referenceItems.map((r, i) => (
+                      <li
+                        key={i}
+                        className="truncate text-xs text-slate-400"
+                        title={r.snippet}
+                      >
+                        参考 {i + 1}：{r.title || r.snippet.slice(0, 60)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         )}
