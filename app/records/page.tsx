@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getSupabase, getStoredSession } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -64,37 +64,44 @@ export default function RecordsPage() {
   const [records, setRecords] = useState<UserRecord[]>([]);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  // 已加载过记录的用户 ID，避免缓存快照/getSession/登录事件对同一用户重复查询
+  const loadedForRef = useRef<string | null>(null);
 
   useEffect(() => {
     const sb = getSupabase();
 
+    const applyUser = (u: User | null) => {
+      setUser(u);
+      if (!u) {
+        setRecords([]);
+        setLoading(false);
+        loadedForRef.current = null;
+        return;
+      }
+      if (loadedForRef.current !== u.id) {
+        loadedForRef.current = u.id;
+        loadRecords(u.id);
+      }
+    };
+
     // 本地缓存会话即时加载（零网络），弱网下不等 getSession 刷新
     const cached = getStoredSession();
     if (cached?.user?.id) {
-      setUser({ id: cached.user.id, email: cached.user.email ?? null } as User);
-      loadRecords(cached.user.id);
+      applyUser(
+        { id: cached.user.id, email: cached.user.email ?? null } as User
+      );
     } else {
       setLoading(false);
     }
 
     // 网络对账（能拿到会话时保持一致；无缓存会话时守卫本就会跳走）
     sb.auth.getSession().then(({ data: { session } }) => {
-      const u = session?.user ?? null;
-      if (u) {
-        setUser(u);
-        loadRecords(u.id);
-      }
+      if (session?.user) applyUser(session.user);
     });
     const {
       data: { subscription },
     } = sb.auth.onAuthStateChange((_e, session) => {
-      const u = session?.user ?? null;
-      setUser(u);
-      if (u) loadRecords(u.id);
-      else {
-        setRecords([]);
-        setLoading(false);
-      }
+      applyUser(session?.user ?? null);
     });
     return () => subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps

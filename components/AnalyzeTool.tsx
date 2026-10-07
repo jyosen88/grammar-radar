@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase, getStoredSession } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
 import type { Exercise } from "@/lib/exercise";
 import { searchReferences, type ReferenceItem } from "@/lib/search";
@@ -346,6 +346,13 @@ export default function AnalyzeTool({
   // 监听登录状态（AuthArea 挂在 SiteNav，这里独立同步一份 user）
   useEffect(() => {
     const sb = getSupabase();
+
+    // 本地缓存会话即时填充（弱网下保证图片上传路径立即使用 user_id 而非 anonymous/）
+    const cached = getStoredSession()?.user;
+    if (cached?.id) {
+      setUser({ id: cached.id, email: cached.email ?? null } as User);
+    }
+
     sb.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
     });
