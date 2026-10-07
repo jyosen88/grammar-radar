@@ -80,7 +80,7 @@ function Section({
   );
 }
 
-/** 知识点卡片完整视图（首页与 quiz 页共用） */
+/** 知识点卡片完整视图 */
 export function Card({ card }: { card: GrammarCard }) {
   const rules = parseRulesTable(card.rules_table);
   return (
