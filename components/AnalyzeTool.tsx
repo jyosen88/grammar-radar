@@ -1384,71 +1384,70 @@ export default function AnalyzeTool({
           {/* 第一步：题目要求（仅作文分析） */}
           {variant === "essay" && (
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-slate-700">
-                ① 题目要求
-                <span className="ml-1 text-xs font-normal text-slate-400">
-                  （作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文）
-                </span>
-              </label>
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
-                  写作范围
-                  <select
-                    value={essayScope}
-                    onChange={(e) => setEssayScope(e.target.value)}
-                    disabled={busy}
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:opacity-60"
-                  >
-                    <option value="">通用（默认中考标准）</option>
-                    {ESSAY_SCOPE_GROUPS.map((g) => (
-                      <optgroup key={g.group} label={g.group}>
-                        {g.items.map((it) => (
-                          <option key={it} value={it}>
-                            {it}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </label>
-                <input
-                  ref={topicFileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) => handleImageSelect(e, "topic")}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => topicFileInputRef.current?.click()}
+            {/* 标题独立一行 */}
+            <label className="block text-sm font-medium text-slate-700">① 题目要求</label>
+            {/* 说明文字：小字灰色，单独一行 */}
+            <p className="text-sm text-gray-500">
+              作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文
+            </p>
+            {/* 工具行：手机端上下排列各占满整行，sm 以上并排（下拉框固定宽、按钮自适应） */}
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
+              <label className="flex w-full items-center gap-2 text-xs font-medium text-slate-600 sm:w-auto">
+                写作范围
+                <select
+                  value={essayScope}
+                  onChange={(e) => setEssayScope(e.target.value)}
                   disabled={busy}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:opacity-60 sm:w-52"
                 >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                    <circle cx="8.5" cy="8.5" r="1.5" />
-                    <path d="m21 15-5-5L5 21" />
-                  </svg>
-                  上传作文题目
-                </button>
-              </div>
+                  <option value="">通用（默认中考标准）</option>
+                  {ESSAY_SCOPE_GROUPS.map((g) => (
+                    <optgroup key={g.group} label={g.group}>
+                      {g.items.map((it) => (
+                        <option key={it} value={it}>
+                          {it}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              <input
+                ref={topicFileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(e) => handleImageSelect(e, "topic")}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => topicFileInputRef.current?.click()}
+                disabled={busy}
+                className="inline-flex w-full shrink-0 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              >
+                <svg
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="m21 15-5-5L5 21" />
+                </svg>
+                上传作文题目
+              </button>
             </div>
             <textarea
               value={topicText}
               onChange={(e) => setTopicText(e.target.value)}
-              rows={2}
-              placeholder="粘贴作文题目要求（中文也可以），或点右侧按钮上传作文题目的图片自动识别…"
-              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              rows={4}
+              placeholder="粘贴作文题目要求（中文也可以），或点上方按钮上传作文题目的图片自动识别…"
+              className="min-h-[120px] w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
             />
           </div>
           )}
