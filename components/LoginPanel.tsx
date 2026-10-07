@@ -2,33 +2,21 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
 import { AuthForm } from "./AuthForm";
 
-/** 只允许站内相对路径，防开放重定向与 /login 自循环 */
-function safeRedirect(raw: string | null): string {
-  if (!raw) return "/";
-  if (!raw.startsWith("/")) return "/";
-  if (raw.startsWith("//")) return "/";
-  if (raw === "/login" || raw.startsWith("/login?") || raw.startsWith("/login/"))
-    return "/";
-  return raw;
-}
-
-/** /login 页面主体：登录/注册成功后跳回原本想访问的页面 */
+/** /login 页面主体：登录/注册成功后统一进入首页 */
 export function LoginPanel() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [checked, setChecked] = useState(false);
-  const redirectTo = safeRedirect(searchParams.get("redirect"));
 
   useEffect(() => {
-    // 已登录用户打开 /login：直接送到目标页，无需再登录
+    // 已登录用户打开 /login：直接进首页，无需再登录
     getSupabase()
       .auth.getSession()
       .then(({ data: { session } }) => {
-        if (session) router.replace(redirectTo);
+        if (session) router.replace("/");
         else setChecked(true);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -53,7 +41,7 @@ export function LoginPanel() {
         </p>
 
         <div className="mt-6">
-          <AuthForm onSuccess={() => router.replace(redirectTo)} />
+          <AuthForm onSuccess={() => router.replace("/")} />
         </div>
 
         <div className="mt-5 text-center">
