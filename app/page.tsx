@@ -21,15 +21,15 @@ export default function HomePage() {
       }}
     >
       <div className="mx-auto flex w-full max-w-md flex-col items-center">
-        {/* 品牌区：Logo + 主副标题（public/logo.png 由 logo.jpg 生成，
-            自带白色发光圆环，外圈方形深边已做径向透明渐隐） */}
+        {/* 品牌区：Logo + 主副标题（public/logo.png 由 logo.jpg 分层重建：
+            G 原色在顶层、白色发光环外扩到 1.38 倍、外圈淡紫光透明渐隐） */}
         <div className="flex w-full flex-col items-center gap-4">
-          {/* 图内 G 标志约占 68%，故图片取容器 48% 使 G 标志本身约为 1/3 */}
+          {/* 图内 G 标志约占 61.7%，图片取容器 54% 使 G 本体约为 1/3 */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/logo.png"
             alt="Grammar Radar 语法雷达"
-            className="aspect-square w-[48%] object-contain"
+            className="aspect-square w-[54%] object-contain"
           />
 
           <h1 className="text-4xl font-bold tracking-tight text-blue-950">
