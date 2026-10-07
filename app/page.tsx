@@ -21,49 +21,22 @@ export default function HomePage() {
       }}
     >
       <div className="mx-auto flex w-full max-w-md flex-col items-center">
-        {/* 品牌区：Logo + 主副标题（Logo 图片位于 public/logo.png，直接展示原图） */}
+        {/* 品牌区：Logo + 主副标题（public/logo.jpg 自带紫蓝底与白色发光圆环） */}
         <div className="flex w-full flex-col items-center gap-4">
-          {/* Logo 宽度为容器 1/3；背后四层光效：紫色环境光 → 近白亮芯 → 柔焦/清晰双光圈 */}
-          <div className="relative flex w-full items-center justify-center">
-            {/* 1. 紫色环境光：大面积淡紫散开，与页面背景衔接 */}
-            <div
-              aria-hidden
-              className="absolute left-1/2 top-1/2 aspect-square w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full blur-2xl"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(196,181,253,0.55) 0%, rgba(196,181,253,0.18) 55%, rgba(196,181,253,0) 75%)",
-              }}
-            />
-            {/* 2. 近白亮芯：比背景更浅的一团白光，托住 Logo */}
-            <div
-              aria-hidden
-              className="absolute left-1/2 top-1/2 aspect-square w-[48%] -translate-x-1/2 -translate-y-1/2 rounded-full blur-xl"
-              style={{
-                background:
-                  "radial-gradient(circle, rgba(255,255,255,0.98) 0%, rgba(245,240,255,0.75) 45%, rgba(233,223,255,0) 72%)",
-              }}
-            />
-            {/* 3. 柔焦光圈：发光白环的模糊层，直径约为 Logo 的 1.45 倍 */}
-            <div
-              aria-hidden
-              className="absolute left-1/2 top-1/2 aspect-square w-[48%] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/80 blur-[3px]"
-            />
-            {/* 4. 清晰光圈：半透明白环 + 内外发光 */}
-            <div
-              aria-hidden
-              className="absolute left-1/2 top-1/2 aspect-square w-[48%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/70"
-              style={{
-                boxShadow:
-                  "0 0 18px rgba(255,255,255,0.9), inset 0 0 12px rgba(255,255,255,0.55)",
-              }}
-            />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/logo.png"
-              alt="Grammar Radar 语法雷达"
-              className="relative z-10 aspect-square w-1/3 object-contain"
-            />
-          </div>
+          {/* 图内 G 标志约占 68%，故图片取容器 48% 使 G 标志本身约为 1/3；
+              径向遮罩让 JPG 矩形边缘渐隐，融入页面渐变背景 */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.jpg"
+            alt="Grammar Radar 语法雷达"
+            className="aspect-square w-[48%] object-contain"
+            style={{
+              WebkitMaskImage:
+                "radial-gradient(circle, #000 60%, rgba(0,0,0,0.55) 74%, transparent 88%)",
+              maskImage:
+                "radial-gradient(circle, #000 60%, rgba(0,0,0,0.55) 74%, transparent 88%)",
+            }}
+          />
 
           <h1 className="text-4xl font-bold tracking-tight text-blue-950">
             Grammar-Radar
