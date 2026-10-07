@@ -1623,7 +1623,7 @@ export default function AnalyzeTool({
               type="button"
               onClick={() => handleEssay()}
               disabled={!canEssay}
-              className="inline-flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-[#1a2388] to-[#9c5cf0] px-4 py-2.5 text-sm font-medium text-white shadow-[0_10px_24px_-10px_rgba(93,62,220,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-[#4f46e5] to-[#9c5cf0] px-4 py-2.5 text-sm font-medium text-white shadow-[0_10px_24px_-10px_rgba(93,62,220,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy && mode === "essay" ? (
                 <>
@@ -1658,7 +1658,7 @@ export default function AnalyzeTool({
               type="button"
               onClick={() => handleAnalyze()}
               disabled={!canAnalyze}
-              className="inline-flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-[#1a2388] to-[#9c5cf0] px-4 py-2.5 text-sm font-medium text-white shadow-[0_10px_24px_-10px_rgba(93,62,220,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-[#4f46e5] to-[#9c5cf0] px-4 py-2.5 text-sm font-medium text-white shadow-[0_10px_24px_-10px_rgba(93,62,220,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy && mode === "analyze" ? (
                 <>
