@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
+import { AuthGuard } from "@/components/AuthGuard";
 import type { User } from "@supabase/supabase-js";
 
 /** user_records 表的一行 */
@@ -101,6 +102,7 @@ export default function RecordsPage() {
   }
 
   return (
+    <AuthGuard>
     <div className="min-h-screen bg-slate-50">
       <SiteNav />
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-8">
@@ -313,5 +315,6 @@ export default function RecordsPage() {
         )}
       </main>
     </div>
+    </AuthGuard>
   );
 }
