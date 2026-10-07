@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase, getStoredSession } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import { AuthForm } from "./AuthForm";
 
@@ -18,10 +18,22 @@ export function AuthArea({ onAuthChange }: AuthAreaProps) {
   // 初始化时读取当前登录状态，并监听变化
   useEffect(() => {
     const sb = getSupabase();
+
+    // 先用本地缓存会话即时渲染邮箱（仅用到 email 字段），不等待弱网请求
+    const cached = getStoredSession()?.user;
+    if (cached?.id) {
+      const snapshot = { id: cached.id, email: cached.email ?? null } as User;
+      setUser(snapshot);
+      onAuthChange?.(snapshot);
+    }
+
+    // 网络结果作为权威状态对账（刷新失败时保留本地快照）
     sb.auth.getSession().then(({ data: { session } }) => {
       const u = session?.user ?? null;
-      setUser(u);
-      onAuthChange?.(u);
+      if (u) {
+        setUser(u);
+        onAuthChange?.(u);
+      }
     });
     const {
       data: { subscription },

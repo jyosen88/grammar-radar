@@ -41,6 +41,33 @@ export async function getCurrentUser() {
   return user;
 }
 
+/** supabase-js 持久化会话所用的 localStorage 键名（需与 createClient 配置一致） */
+export const AUTH_STORAGE_KEY = "grammar-radar-auth";
+
+/** 本地缓存会话的最小结构 */
+export interface StoredSession {
+  access_token?: string;
+  refresh_token?: string;
+  expires_at?: number;
+  user?: { id?: string; email?: string };
+}
+
+/**
+ * 只从 localStorage 同步读取缓存会话，绝不发起网络请求。
+ * 手机弱网下 getSession() 可能因刷新 token 请求挂起，路由守卫用它做即时判定。
+ */
+export function getStoredSession(): StoredSession | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as { currentSession?: StoredSession };
+    return data?.currentSession ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export interface GrammarCard {
   id?: number;
   card_code: string;

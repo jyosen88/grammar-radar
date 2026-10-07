@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getSupabase } from "@/lib/supabase";
+import { getStoredSession } from "@/lib/supabase";
 import { AuthForm } from "./AuthForm";
 
 /** /login 页面主体：登录/注册成功后统一进入首页 */
@@ -12,15 +12,11 @@ export function LoginPanel() {
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    // 已登录用户打开 /login：直接进首页，无需再登录
-    getSupabase()
-      .auth.getSession()
-      .then(({ data: { session } }) => {
-        if (session) router.replace("/");
-        else setChecked(true);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // 同步读取本地缓存会话（零网络）：已登录直接进首页；
+    // 不使用 getSession()，避免手机弱网刷新 token 时登录页一直“加载中”
+    if (getStoredSession()?.access_token) router.replace("/");
+    else setChecked(true);
+  }, [router]);
 
   if (!checked) {
     return (

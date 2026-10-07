@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase, getStoredSession } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
 import { AuthGuard } from "@/components/AuthGuard";
 import type { User } from "@supabase/supabase-js";
@@ -67,11 +67,23 @@ export default function RecordsPage() {
 
   useEffect(() => {
     const sb = getSupabase();
+
+    // 本地缓存会话即时加载（零网络），弱网下不等 getSession 刷新
+    const cached = getStoredSession();
+    if (cached?.user?.id) {
+      setUser({ id: cached.user.id, email: cached.user.email ?? null } as User);
+      loadRecords(cached.user.id);
+    } else {
+      setLoading(false);
+    }
+
+    // 网络对账（能拿到会话时保持一致；无缓存会话时守卫本就会跳走）
     sb.auth.getSession().then(({ data: { session } }) => {
       const u = session?.user ?? null;
-      setUser(u);
-      if (u) loadRecords(u.id);
-      else setLoading(false);
+      if (u) {
+        setUser(u);
+        loadRecords(u.id);
+      }
     });
     const {
       data: { subscription },
@@ -85,6 +97,7 @@ export default function RecordsPage() {
       }
     });
     return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadRecords(userId: string) {
