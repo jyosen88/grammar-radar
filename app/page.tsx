@@ -98,7 +98,7 @@ export default function HomePage() {
               <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-100 to-indigo-100 sm:h-16 sm:w-16">
                 <Icon className="h-8 w-8 text-indigo-600 sm:h-10 sm:w-10" />
               </span>
-              <span className="whitespace-nowrap text-center text-xs font-medium text-slate-700 sm:text-sm">
+              <span className="whitespace-nowrap text-center text-xs font-bold text-slate-800 sm:text-sm">
                 {label}
               </span>
             </Link>
