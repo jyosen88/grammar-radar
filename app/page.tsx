@@ -13,10 +13,10 @@ export default function HomePage() {
     <main
       className="flex min-h-screen w-full flex-col items-center justify-center px-4 py-12"
       style={{
-        // 整体背景取 Logo 外光晕的紫色深度：左品紫 → 中紫 → 右蓝紫；
-        // 顶层纵向在卡片区（约 75% 以下）渐到极浅紫，保证白卡片仍清晰
+        // 整体背景：清爽的浅紫蓝（左淡品紫 → 中浅紫 → 右浅蓝紫），桌面端不显脏；
+        // 顶层纵向在卡片区（约 70% 以下）渐到近白，保证白卡片清晰
         background:
-          "linear-gradient(180deg, rgba(255,255,255,0) 50%, rgba(245,243,255,0.55) 75%, #F5F3FF 90%), linear-gradient(105deg, #CDA3F6 0%, #B79BF2 50%, #A8B6F0 100%)",
+          "linear-gradient(180deg, rgba(255,255,255,0) 45%, rgba(250,249,255,0.6) 70%, #FAF9FF 88%), linear-gradient(105deg, #E8D9FC 0%, #DED4FA 50%, #D6DFF8 100%)",
         backgroundRepeat: "no-repeat",
       }}
     >
