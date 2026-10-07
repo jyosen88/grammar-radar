@@ -55,14 +55,22 @@ export interface StoredSession {
 /**
  * 只从 localStorage 同步读取缓存会话，绝不发起网络请求。
  * 手机弱网下 getSession() 可能因刷新 token 请求挂起，路由守卫用它做即时判定。
+ * 兼容两种存储结构：
+ * - auth-js v2.117+：直接存 session 对象（顶层即 access_token 等）
+ * - 旧版 gotrue-js：{ currentSession: session, expiresAt, ... } 包装
  */
 export function getStoredSession(): StoredSession | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw) as { currentSession?: StoredSession };
-    return data?.currentSession ?? null;
+    const data = JSON.parse(raw) as
+      | StoredSession
+      | { currentSession?: StoredSession }
+      | null;
+    if (!data || typeof data !== "object") return null;
+    if ("access_token" in data) return data as StoredSession;
+    return (data as { currentSession?: StoredSession }).currentSession ?? null;
   } catch {
     return null;
   }
