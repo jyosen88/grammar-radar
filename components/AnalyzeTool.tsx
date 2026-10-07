@@ -1498,8 +1498,8 @@ export default function AnalyzeTool({
             <p className="text-sm text-gray-500">
               （作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文）
             </p>
-            {/* 工具行：手机端上下排列各占满整行，sm 以上并排且两框等宽同高 */}
-            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
+            {/* 工具行：手机端上下排列各占满整行；sm 以上并排、两框等宽同高并整体靠右对齐粘贴框右缘 */}
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
               <EssayTypeSelect
                 value={essayScope}
                 onChange={setEssayScope}
