@@ -5,7 +5,9 @@ import { usePathname } from "next/navigation";
 import { AuthArea } from "./AuthArea";
 
 const ITEMS = [
-  { href: "/", label: "首页" },
+  { href: "/essay", label: "作文分析" },
+  { href: "/single", label: "单题语法分析" },
+  { href: "/sentence", label: "长难句分析" },
   { href: "/records", label: "我的记录" },
 ];
 
@@ -14,7 +16,7 @@ export function SiteNav() {
   const pathname = usePathname();
   return (
     <nav className="border-b border-slate-200 bg-white">
-      <div className="mx-auto flex max-w-3xl items-center gap-1 px-4 py-2.5">
+      <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-1 px-4 py-2.5">
         {ITEMS.map(({ href, label }) => {
           const active = pathname === href;
           return (
