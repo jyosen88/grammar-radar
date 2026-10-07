@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { AuthArea } from "./AuthArea";
 
 const ITEMS = [
-  { href: "/", label: "语法诊断" },
+  { href: "/", label: "首页" },
   { href: "/quiz", label: "随机做题" },
   { href: "/records", label: "我的记录" },
 ];
