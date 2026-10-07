@@ -123,7 +123,7 @@ export default function RecordsPage() {
 
   return (
     <AuthGuard>
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-[#f8f5fe]">
       <SiteNav />
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-8">
         <div>

@@ -15,7 +15,7 @@ const ITEMS = [
 export function SiteNav() {
   const pathname = usePathname();
   return (
-    <nav className="border-b border-slate-200 bg-white">
+    <nav className="border-b border-[#ece2fb] bg-[#fbf9ff]">
       <div className="mx-auto flex max-w-3xl flex-col gap-2 px-2 py-2.5 md:flex-row md:items-center md:gap-1 md:px-4">
         {/* 手机端：四个功能按钮在登录注册下方一行等宽并列；桌面端：展开为单行 */}
         <div className="order-2 grid w-full grid-cols-4 gap-0.5 md:order-none md:w-auto md:contents md:gap-1">
@@ -28,7 +28,7 @@ export function SiteNav() {
                 className={`flex items-center justify-center whitespace-normal text-center text-[13px] font-medium leading-tight rounded-2xl border px-1 py-2.5 transition md:whitespace-nowrap md:px-3.5 md:py-1.5 md:text-sm ${
                   active
                     ? "border-transparent bg-gradient-to-r from-[#1a2388] to-[#9c5cf0] text-white shadow-[0_8px_20px_-10px_rgba(93,62,220,0.6)]"
-                    : "border-transparent bg-[#f0f2fb] text-slate-600 hover:bg-[#e6e9f8] hover:text-slate-800"
+                    : "border-[#e7dbfa] bg-[#f3ecfd] text-[#6d4fc9] hover:bg-[#eadefb] hover:text-[#5b3fb5]"
                 }`}
               >
                 {label}

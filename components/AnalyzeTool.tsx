@@ -140,7 +140,7 @@ function EssayTypeSelect({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="relative flex h-10 w-full items-center justify-center rounded-2xl border border-transparent bg-[#f4f6fe] px-3 text-sm font-medium text-slate-700 outline-none transition hover:bg-[#e9ecfb] focus:border-[#cbbcf5] disabled:cursor-not-allowed disabled:opacity-60"
+        className="relative flex h-10 w-full items-center justify-center rounded-2xl border border-[#ddcbfa] bg-white px-3 text-sm font-medium text-slate-700 outline-none transition hover:bg-[#f6f0fe] focus:border-[#b79df2] disabled:cursor-not-allowed disabled:opacity-60"
       >
         {/* 文字在整按钮宽度内绝对居中 */}
         <span className="truncate">{value || "写作类型"}</span>
@@ -1372,19 +1372,9 @@ export default function AnalyzeTool({
   const canEssay = !busy && !!analysisText.trim() && !!topicText.trim();
 
   return (
-    <div
-      className={`min-h-screen ${
-        variant === "essay" ? "bg-[#fafbff]" : ""
-      }`}
-    >
+    <div className="min-h-screen bg-[#f8f5fe]">
       <SiteNav />
-      <header
-        className={
-          variant === "essay"
-            ? "bg-transparent"
-            : "border-b border-slate-200 bg-white"
-        }
-      >
+      <header className="bg-transparent">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-8">
           <div>
             <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight">
@@ -1393,18 +1383,12 @@ export default function AnalyzeTool({
                 <img
                   src="/logo.png"
                   alt="Grammar Radar"
-                  className="h-9 w-9 shrink-0 rounded-xl object-contain"
+                  className="h-9 w-9 shrink-0 object-contain"
                 />
               )}
               <span>
                 Grammar Radar{" "}
-                <span
-                  className={
-                    variant === "essay"
-                      ? "bg-gradient-to-r from-[#1a2388] to-[#9c5cf0] bg-clip-text text-transparent"
-                      : "text-indigo-600"
-                  }
-                >
+                <span className="bg-gradient-to-r from-[#1a2388] to-[#9c5cf0] bg-clip-text text-transparent">
                   · {variant === "essay" ? "作文分析" : "单题语法分析"}
                 </span>
               </span>
@@ -1418,7 +1402,7 @@ export default function AnalyzeTool({
 
           {/* 第一步：题目要求（仅作文分析） */}
           {variant === "essay" && (
-          <div className="space-y-3 rounded-2xl border border-[#ecebfa] bg-[#f5f6fd] p-4 shadow-[0_10px_30px_-18px_rgba(108,79,216,0.35)] sm:p-6">
+          <div className="space-y-3 rounded-2xl border border-[#ecdcfb] bg-[#fdfbff] p-4 shadow-[0_10px_30px_-18px_rgba(108,79,216,0.35)] sm:p-6">
             {/* 标题独立一行 */}
             <label className="block text-xl font-semibold text-slate-800">📝 ① 题目要求</label>
             {/* 说明文字：小字灰色，单独一行 */}
@@ -1443,7 +1427,7 @@ export default function AnalyzeTool({
                 type="button"
                 onClick={() => topicFileInputRef.current?.click()}
                 disabled={busy}
-                className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-2xl border border-[#e4dcfb] bg-[#f2edfe] px-3 text-sm font-medium text-[#6d3fd4] transition hover:bg-[#e9e1fd] disabled:cursor-not-allowed disabled:opacity-60 sm:w-40"
+                className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-2xl border border-[#ddcbfa] bg-[#f6f0ff] px-3 text-sm font-medium text-[#6d3fd4] transition hover:bg-[#eee4fd] disabled:cursor-not-allowed disabled:opacity-60 sm:w-40"
               >
                 <svg
                   className="h-3.5 w-3.5"
@@ -1467,7 +1451,7 @@ export default function AnalyzeTool({
               onChange={(e) => setTopicText(e.target.value)}
               rows={4}
               placeholder="粘贴作文题目要求（中文也可以），或点上方按钮上传作文题目的图片自动识别…"
-              className="min-h-[120px] w-full rounded-2xl border border-[#e2e4f5] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-300 focus:border-[#b9a6f5] focus:ring-2 focus:ring-[#ece5fc]"
+              className="min-h-[120px] w-full rounded-2xl border border-[#e9dcfb] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-300 focus:border-[#b9a6f5] focus:ring-2 focus:ring-[#ece5fc]"
             />
           </div>
           )}
@@ -1476,7 +1460,7 @@ export default function AnalyzeTool({
           <div
             className={
               variant === "essay"
-                ? "space-y-3 rounded-2xl border border-[#ecebfa] bg-[#f5f6fd] p-4 shadow-[0_10px_30px_-18px_rgba(108,79,216,0.35)] sm:p-6"
+                ? "space-y-3 rounded-2xl border border-[#ecdcfb] bg-[#fdfbff] p-4 shadow-[0_10px_30px_-18px_rgba(108,79,216,0.35)] sm:p-6"
                 : "space-y-2"
             }
           >
@@ -1494,8 +1478,8 @@ export default function AnalyzeTool({
               }
               className={
                 variant === "essay"
-                  ? "w-full rounded-2xl border border-[#e2e4f5] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-300 focus:border-[#b9a6f5] focus:ring-2 focus:ring-[#ece5fc]"
-                  : "w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                  ? "w-full rounded-2xl border border-[#e9dcfb] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-300 focus:border-[#b9a6f5] focus:ring-2 focus:ring-[#ece5fc]"
+                  : "w-full rounded-2xl border border-[#e9dcfb] bg-white px-4 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-300 focus:border-[#b9a6f5] focus:ring-2 focus:ring-[#ece5fc]"
               }
             />
           </div>
@@ -1616,11 +1600,7 @@ export default function AnalyzeTool({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={busy}
-              className={
-                variant === "essay"
-                  ? "inline-flex items-center gap-1.5 rounded-2xl border border-[#e4dcfb] bg-[#f2edfe] px-4 py-2.5 text-sm font-medium text-[#6d3fd4] transition hover:bg-[#e9e1fd] disabled:cursor-not-allowed disabled:opacity-60"
-                  : "inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-              }
+              className="inline-flex items-center gap-1.5 rounded-2xl border border-[#ddcbfa] bg-[#f6f0ff] px-4 py-2.5 text-sm font-medium text-[#6d3fd4] transition hover:bg-[#eee4fd] disabled:cursor-not-allowed disabled:opacity-60"
             >
               <svg
                 className="h-4 w-4"
@@ -1678,7 +1658,7 @@ export default function AnalyzeTool({
               type="button"
               onClick={() => handleAnalyze()}
               disabled={!canAnalyze}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-[#1a2388] to-[#9c5cf0] px-4 py-2.5 text-sm font-medium text-white shadow-[0_10px_24px_-10px_rgba(93,62,220,0.6)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy && mode === "analyze" ? (
                 <>

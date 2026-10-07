@@ -13,7 +13,7 @@ export default function SentencePage() {
     <AuthGuard>
       <div className="min-h-screen">
         <SiteNav />
-        <main className="flex min-h-[calc(100vh-3rem)] items-center justify-center bg-gradient-to-b from-violet-100 via-blue-50 to-white px-4 py-12">
+        <main className="flex min-h-[calc(100vh-3rem)] items-center justify-center bg-gradient-to-b from-[#efe6fe] via-[#f5f0fe] to-[#f8f5fe] px-4 py-12">
           <div className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-sm">
             <span className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-violet-100 to-indigo-100">
               <Network className="h-11 w-11 text-indigo-600" />

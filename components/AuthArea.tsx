@@ -67,7 +67,7 @@ export function AuthArea({ onAuthChange }: AuthAreaProps) {
           type="button"
           onClick={handleLogout}
           disabled={busy}
-          className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-60"
+          className="rounded-lg border border-[#e7dbfa] bg-[#f4eefc] px-2.5 py-1 font-medium text-[#6d4fc9] transition hover:bg-[#ebdff9] disabled:opacity-60"
         >
           退出
         </button>
@@ -80,7 +80,7 @@ export function AuthArea({ onAuthChange }: AuthAreaProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-2xl border border-[#e7defb] bg-[#f5f1fe] px-2.5 py-1 text-xs font-medium text-[#7c55d8] transition hover:bg-[#ece4fd]"
+        className="rounded-2xl border border-[#ddcbfa] bg-[#f6f1ff] px-2.5 py-1 text-xs font-medium text-[#6d3fd4] transition hover:bg-[#eee4fd]"
       >
         登录 / 注册
       </button>

@@ -11,7 +11,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
-      <body className="bg-slate-50 text-slate-900 antialiased">{children}</body>
+      <body className="bg-[#f8f5fe] text-slate-900 antialiased">{children}</body>
     </html>
   );
 }
