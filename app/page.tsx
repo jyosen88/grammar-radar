@@ -10,27 +10,37 @@ const ENTRIES = [
 
 export default function HomePage() {
   return (
-    <main
-      className="flex min-h-screen w-full flex-col items-center justify-center px-4 py-12"
-      style={{
-        // 底层：左上紫 → 中上蓝紫 → 右上浅蓝；顶层：纵向从透明渐隐到纯白，
-        // 复刻设计图顶部多彩、底部净白的柔和背景
-        background:
-          "linear-gradient(180deg, rgba(255,255,255,0) 8%, rgba(255,255,255,0.35) 38%, rgba(255,255,255,0.8) 58%, #ffffff 74%), linear-gradient(105deg, #D5BAFD 0%, #C0CCFE 50%, #B2DAFE 100%)",
-        backgroundRepeat: "no-repeat",
-      }}
-    >
+    <main className="flex min-h-screen w-full flex-col items-center justify-center bg-gradient-to-b from-violet-100 via-blue-50 to-white px-4 py-12">
       <div className="mx-auto flex w-full max-w-md flex-col items-center">
-        {/* 品牌区：Logo + 主副标题（public/logo.png 由 logo.jpg 分层重建：
-            G 原色在顶层、白色发光环外扩到 1.38 倍、外圈淡紫光透明渐隐） */}
+        {/* 品牌区：Logo + 主副标题（Logo 图片位于 public/logo.png，直接展示原图） */}
         <div className="flex w-full flex-col items-center gap-4">
-          {/* 图内 G 标志约占 61.7%，图片取容器 54% 使 G 本体约为 1/3 */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/logo.png"
-            alt="Grammar Radar 语法雷达"
-            className="aspect-square w-[54%] object-contain"
-          />
+          {/* Logo 宽度为容器 1/3，左右边缘正好落在横向 1/3、2/3 位置；背后叠加两层柔焦紫色光环 */}
+          <div className="relative flex w-full items-center justify-center">
+            {/* 外层大光晕：紫色径向渐变 + 强模糊，散开一圈柔光 */}
+            <div
+              aria-hidden
+              className="absolute left-1/2 top-1/2 h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full blur-2xl sm:h-64 sm:w-64"
+              style={{
+                background:
+                  "radial-gradient(circle, rgba(139,92,246,0.55) 0%, rgba(139,92,246,0.28) 42%, rgba(139,92,246,0) 72%)",
+              }}
+            />
+            {/* 内层亮芯：紧贴 Logo 背后的亮紫白高光，模拟设计图的发光感 */}
+            <div
+              aria-hidden
+              className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full blur-xl sm:h-40 sm:w-40"
+              style={{
+                background:
+                  "radial-gradient(circle, rgba(221,214,254,0.95) 0%, rgba(196,181,253,0.55) 45%, rgba(196,181,253,0) 72%)",
+              }}
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.png"
+              alt="Grammar Radar 语法雷达"
+              className="relative z-10 aspect-square w-1/3 object-contain"
+            />
+          </div>
 
           <h1 className="text-4xl font-bold tracking-tight text-blue-950">
             Grammar-Radar
