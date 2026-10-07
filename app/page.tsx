@@ -13,13 +13,24 @@ export default function HomePage() {
     <main className="flex min-h-screen w-full flex-col items-center justify-center bg-gradient-to-b from-violet-100 via-blue-50 to-white px-4 py-12">
       <div className="mx-auto flex w-full max-w-md flex-col items-center">
         {/* 品牌区：Logo + 主副标题（Logo 图片位于 public/logo.png，直接展示原图） */}
-        <div className="flex flex-col items-center gap-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/logo.png"
-            alt="Grammar Radar 语法雷达"
-            className="h-20 w-20 object-contain sm:h-24 sm:w-24"
-          />
+        <div className="flex w-full flex-col items-center gap-4">
+          {/* Logo 宽度为容器 1/3，左右边缘正好落在横向 1/3、2/3 位置；背后叠加柔焦紫色光环 */}
+          <div className="relative flex w-full items-center justify-center">
+            <div
+              aria-hidden
+              className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full blur-2xl sm:h-48 sm:w-48"
+              style={{
+                background:
+                  "radial-gradient(circle, rgba(139,92,246,0.3) 0%, transparent 70%)",
+              }}
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.png"
+              alt="Grammar Radar 语法雷达"
+              className="relative z-10 aspect-square w-1/3 object-contain"
+            />
+          </div>
 
           <h1 className="text-4xl font-bold tracking-tight text-blue-950">
             Grammar-Radar
