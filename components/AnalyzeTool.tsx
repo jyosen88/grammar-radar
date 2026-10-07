@@ -72,7 +72,7 @@ interface GuideStep {
 /** 维度评价等级 */
 type EvalLevel = "超出预期" | "优秀" | "良好" | "一般" | "待提高";
 
-/** 按写作范围评分维度的单项评价 */
+/** 按写作类型评分维度的单项评价 */
 interface ScoreItem {
   name: string;
   level: EvalLevel;
@@ -106,7 +106,7 @@ interface EssayResult {
   errors: AnalysisError[];
 }
 
-/** 写作范围分组下拉选项 */
+/** 写作类型分组下拉选项 */
 const ESSAY_SCOPE_GROUPS: { group: string; items: string[] }[] = [
   { group: "国内考试", items: ["中考", "高考"] },
   { group: "单元作文", items: ["七上", "七下", "八上", "八下", "九上", "九下"] },
@@ -219,7 +219,7 @@ export default function AnalyzeTool({
   const [mode, setMode] = useState<"analyze" | "guide" | "essay" | null>(null);
   // 作文分析（两步流程）：①题目要求 ②作文
   const [topicText, setTopicText] = useState("");
-  const [essayScope, setEssayScope] = useState(""); // 写作范围，空 = 默认中考标准
+  const [essayScope, setEssayScope] = useState(""); // 写作类型，空 = 默认中考标准
   const [essayResult, setEssayResult] = useState<EssayResult | null>(null);
   // 分析时的题目+作文快照，供追问使用（用户之后可能改了输入框）
   const [essaySnapshot, setEssaySnapshot] = useState<{
@@ -603,7 +603,7 @@ export default function AnalyzeTool({
   /** 把已有作文分析结果拼成纯文本，作为追问时的上下文 */
   function buildAnalysisContext(r: EssayResult): string {
     const lines = [
-      `写作范围：${r.scopeLabel}`,
+      `写作类型：${r.scopeLabel}`,
       `扣题判断：${r.onTopic ? "切题" : "偏题"}。${r.onTopicComment}`,
       r.overallSummary ? `一句话总评：${r.overallSummary}` : "",
       r.scores.length
@@ -1376,7 +1376,7 @@ export default function AnalyzeTool({
             </h1>
             <p className="mt-1 text-sm text-slate-500">
               {variant === "essay"
-                ? "输入作文题目要求和你的作文，AI 按所选写作范围批改、逐处纠错并生成针对性练习"
+                ? "输入作文题目要求和你的作文，AI 按所选写作类型批改、逐处纠错并生成针对性练习"
                 : "粘贴英文句子，或上传错题图片，AI 自动找出语法错误、讲解细化知识点并生成针对性练习"}
             </p>
           </div>
@@ -1390,28 +1390,25 @@ export default function AnalyzeTool({
             <p className="text-sm text-gray-500">
               （作文分析必填，如：请以 My Favorite Season 为题写一篇 80 词作文）
             </p>
-            {/* 工具行：手机端上下排列各占满整行，sm 以上并排（下拉框固定宽、按钮自适应） */}
+            {/* 工具行：手机端上下排列各占满整行，sm 以上并排且两框等宽同高 */}
             <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
-              <label className="flex w-full items-center gap-2 text-xs font-medium text-slate-600 sm:w-auto">
-                写作范围
-                <select
-                  value={essayScope}
-                  onChange={(e) => setEssayScope(e.target.value)}
-                  disabled={busy}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:opacity-60 sm:w-52"
-                >
-                  <option value="">通用（默认中考标准）</option>
-                  {ESSAY_SCOPE_GROUPS.map((g) => (
-                    <optgroup key={g.group} label={g.group}>
-                      {g.items.map((it) => (
-                        <option key={it} value={it}>
-                          {it}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </label>
+              <select
+                value={essayScope}
+                onChange={(e) => setEssayScope(e.target.value)}
+                disabled={busy}
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:opacity-60 sm:w-40"
+              >
+                <option value="">写作类型</option>
+                {ESSAY_SCOPE_GROUPS.map((g) => (
+                  <optgroup key={g.group} label={g.group}>
+                    {g.items.map((it) => (
+                      <option key={it} value={it}>
+                        {it}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
               <input
                 ref={topicFileInputRef}
                 type="file"
@@ -1423,7 +1420,7 @@ export default function AnalyzeTool({
                 type="button"
                 onClick={() => topicFileInputRef.current?.click()}
                 disabled={busy}
-                className="inline-flex w-full shrink-0 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-40"
               >
                 <svg
                   className="h-3.5 w-3.5"
@@ -1765,7 +1762,7 @@ export default function AnalyzeTool({
                 </div>
               )}
 
-              {/* 按写作范围的评分维度 */}
+              {/* 按写作类型的评分维度 */}
               {essayResult.scores.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-slate-400">
