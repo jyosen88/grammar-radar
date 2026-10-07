@@ -2201,7 +2201,7 @@ export default function AnalyzeTool({
                       : "📖 更多知识点讲解"
                     : "📖 更多知识点讲解"}
               </button>
-              {analyzePanels[-1]?.exercises.length === 0 && (
+              {(analyzePanels[-1]?.exercises.length ?? 0) === 0 && (
                 <button
                   type="button"
                   onClick={handleGeneralExercises}
@@ -2334,7 +2334,7 @@ export default function AnalyzeTool({
                           : "📖 这道题考什么？点这里深入了解"
                         : "📖 这道题考什么？点这里深入了解"}
                   </button>
-                  {analyzePanels[-1]?.exercises.length === 0 && (
+                  {(analyzePanels[-1]?.exercises.length ?? 0) === 0 && (
                     <button
                       type="button"
                       onClick={handleGeneralExercises}
