@@ -14,14 +14,24 @@ export default function HomePage() {
       <div className="mx-auto flex w-full max-w-md flex-col items-center">
         {/* 品牌区：Logo + 主副标题（Logo 图片位于 public/logo.png，直接展示原图） */}
         <div className="flex w-full flex-col items-center gap-4">
-          {/* Logo 宽度为容器 1/3，左右边缘正好落在横向 1/3、2/3 位置；背后叠加柔焦紫色光环 */}
+          {/* Logo 宽度为容器 1/3，左右边缘正好落在横向 1/3、2/3 位置；背后叠加两层柔焦紫色光环 */}
           <div className="relative flex w-full items-center justify-center">
+            {/* 外层大光晕：紫色径向渐变 + 强模糊，散开一圈柔光 */}
             <div
               aria-hidden
-              className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full blur-2xl sm:h-48 sm:w-48"
+              className="absolute left-1/2 top-1/2 h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full blur-2xl sm:h-64 sm:w-64"
               style={{
                 background:
-                  "radial-gradient(circle, rgba(139,92,246,0.3) 0%, transparent 70%)",
+                  "radial-gradient(circle, rgba(139,92,246,0.55) 0%, rgba(139,92,246,0.28) 42%, rgba(139,92,246,0) 72%)",
+              }}
+            />
+            {/* 内层亮芯：紧贴 Logo 背后的亮紫白高光，模拟设计图的发光感 */}
+            <div
+              aria-hidden
+              className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full blur-xl sm:h-40 sm:w-40"
+              style={{
+                background:
+                  "radial-gradient(circle, rgba(221,214,254,0.95) 0%, rgba(196,181,253,0.55) 45%, rgba(196,181,253,0) 72%)",
               }}
             />
             {/* eslint-disable-next-line @next/next/no-img-element */}
