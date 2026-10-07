@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getSupabase, type GrammarCard } from "@/lib/supabase";
-import { Card } from "@/components/GrammarCardView";
+import { getSupabase } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
 import type { Exercise } from "@/lib/exercise";
 import { searchReferences, type ReferenceItem } from "@/lib/search";
@@ -56,17 +55,6 @@ interface OcrConfirm {
   text: string;
   past: string[];
   future: string[];
-}
-
-/** 分步引导的单个步骤 */
-interface GuideStep {
-  step: number;
-  question: string;
-  options: string[];
-  correct_answer: string;
-  hint: string;
-  knowledge_point: string;
-  card_codes: string[];
 }
 
 /** 维度评价等级 */
@@ -287,7 +275,7 @@ interface AnalyzePanel extends ExerciseState {
 
 /**
  * 语法分析工具（单题语法分析 / 作文分析共用同一套逻辑与结果展示）。
- * variant="single"：只显示单题分析 + 分步引导；variant="essay"：显示题目要求 + 作文分析。
+ * variant="single"：只显示单题分析；variant="essay"：显示题目要求 + 作文分析。
  */
 export default function AnalyzeTool({
   variant = "single",
@@ -323,8 +311,8 @@ export default function AnalyzeTool({
     Record<number, AnalyzePanel>
   >({});
 
-  // 分步引导答题状态
-  const [mode, setMode] = useState<"analyze" | "guide" | "essay" | null>(null);
+  // 分析模式状态
+  const [mode, setMode] = useState<"analyze" | "essay" | null>(null);
   // 作文分析（两步流程）：①题目要求 ②作文
   const [topicText, setTopicText] = useState("");
   const [essayScope, setEssayScope] = useState(""); // 写作类型，空 = 默认中考标准
@@ -348,16 +336,6 @@ export default function AnalyzeTool({
   const [practicePanels, setPracticePanels] = useState<
     Record<number, PracticePanel>
   >({});
-  const [guide, setGuide] = useState<{
-    steps: GuideStep[];
-    topic: string;
-    cards: Map<string, GrammarCard>;
-  } | null>(null);
-  const [gIdx, setGIdx] = useState(0);
-  const [gChosen, setGChosen] = useState<(string | null)[]>([]); // 每步最近一次选择
-  const [gFirstCorrect, setGFirstCorrect] = useState<boolean[]>([]); // 每步是否一次答对
-  const [gShowCard, setGShowCard] = useState<boolean[]>([]); // 每步是否展开知识点卡片
-  const [gFinished, setGFinished] = useState(false);
 
   // 错题图片上传
   const ERROR_BUCKET = "error-bank";
@@ -419,17 +397,11 @@ export default function AnalyzeTool({
     setAChatMessages([]);
     setAChatInput("");
     setMode(null);
-    setGuide(null);
     setEssayResult(null);
     setEssaySnapshot(null);
     setChatMessages([]);
     setChatInput("");
     setPracticePanels({});
-    setGIdx(0);
-    setGChosen([]);
-    setGFirstCorrect([]);
-    setGShowCard([]);
-    setGFinished(false);
   }
 
   /**
@@ -520,72 +492,6 @@ export default function AnalyzeTool({
     });
   }
 
-  /** 调用 /api/guide 拆题，并预取所有步骤引用的知识点卡片 */
-  async function runGuide(text: string) {
-    setBusyHint("AI 正在拆成引导步骤…");
-    const res = await fetch("/api/guide", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error ?? "生成引导题失败，请重试");
-
-    const steps: GuideStep[] = Array.isArray(data?.steps) ? data.steps : [];
-    if (steps.length === 0) {
-      throw new Error("AI 没有拆出引导步骤，请换一道题试试");
-    }
-
-    // 一次性预取全部步骤引用的卡片
-    const codes = [...new Set(steps.flatMap((s) => s.card_codes))];
-    const cards = new Map<string, GrammarCard>();
-    if (codes.length) {
-      const { data: rows, error: qErr } = await getSupabase()
-        .from("grammar_cards")
-        .select("*")
-        .in("card_code", codes);
-      if (qErr) throw qErr;
-      for (const c of (rows as GrammarCard[] | null) ?? []) cards.set(c.card_code, c);
-    }
-
-    setGuide({ steps, topic: String(data?.summary_topic ?? ""), cards });
-    setGIdx(0);
-    setGChosen(steps.map(() => null));
-    setGFirstCorrect(steps.map(() => false));
-    setGShowCard(steps.map(() => false));
-    setGFinished(false);
-    setMode("guide");
-  }
-
-  /** 选择某一步的选项 */
-  function chooseOption(opt: string) {
-    if (!guide) return;
-    const step = guide.steps[gIdx];
-    if (gChosen[gIdx] === step.correct_answer) return; // 已答对，锁定
-    const nextChosen = [...gChosen];
-    nextChosen[gIdx] = opt;
-    setGChosen(nextChosen);
-    if (opt === step.correct_answer) {
-      // 第一次尝试就答对才得分
-      if (gChosen[gIdx] === null) {
-        const f = [...gFirstCorrect];
-        f[gIdx] = true;
-        setGFirstCorrect(f);
-      }
-    } else {
-      // 答错：自动弹出知识点卡片
-      const s = [...gShowCard];
-      s[gIdx] = true;
-      setGShowCard(s);
-    }
-  }
-
-  function gotoNextStep() {
-    if (!guide) return;
-    if (gIdx + 1 >= guide.steps.length) setGFinished(true);
-    else setGIdx(gIdx + 1);
-  }
-
   /** 文本框直接分析；overrideText 用于图片识别确认后立即分析（绕过异步 setState） */
   async function handleAnalyze(overrideText?: string) {
     const text = (overrideText ?? analysisText).trim();
@@ -596,22 +502,6 @@ export default function AnalyzeTool({
       await runAnalysis(text);
     } catch (e) {
       setAnalysisError(e instanceof Error ? e.message : "分析失败，请重试");
-    } finally {
-      setBusy(false);
-      setBusyHint("");
-    }
-  }
-
-  /** 文本框分步引导答题 */
-  async function handleGuide() {
-    const text = analysisText.trim();
-    if (busy || !text) return;
-    setBusy(true);
-    resetResults();
-    try {
-      await runGuide(text);
-    } catch (e) {
-      setAnalysisError(e instanceof Error ? e.message : "生成引导题失败，请重试");
     } finally {
       setBusy(false);
       setBusyHint("");
@@ -1733,7 +1623,6 @@ export default function AnalyzeTool({
             </button>
             )}
             {variant === "single" && (
-            <>
             <button
               type="button"
               onClick={() => handleAnalyze()}
@@ -1767,40 +1656,6 @@ export default function AnalyzeTool({
                 <>✨ 单题语法分析</>
               )}
             </button>
-            <button
-              type="button"
-              onClick={handleGuide}
-              disabled={!canAnalyze}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {busy && mode === "guide" ? (
-                <>
-                  <svg
-                    className="h-4 w-4 animate-spin"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                    />
-                  </svg>
-                  {busyHint || "处理中…"}
-                </>
-              ) : (
-                <>🎯 分步引导答题</>
-              )}
-            </button>
-            </>
             )}
           </div>
 
@@ -2801,194 +2656,11 @@ export default function AnalyzeTool({
           </div>
         )}
 
-        {/* 分步引导答题 */}
-        {mode === "guide" && guide && !busy && (
-          <div className="space-y-4">
-            {!gFinished ? (
-              (() => {
-                const step = guide.steps[gIdx];
-                const chosen = gChosen[gIdx] ?? null;
-                const solved = chosen === step.correct_answer;
-                const stepCards = step.card_codes
-                  .map((c) => guide.cards.get(c))
-                  .filter((c): c is GrammarCard => !!c);
-                return (
-                  <div className="space-y-4 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
-                    {/* 进度 */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-amber-600">
-                        第 {gIdx + 1} / {guide.steps.length} 步
-                      </span>
-                      <span className="text-sm text-slate-500">
-                        得分：{gFirstCorrect.filter(Boolean).length}
-                      </span>
-                    </div>
-                    <div className="flex gap-1.5">
-                      {guide.steps.map((_, i) => (
-                        <div
-                          key={i}
-                          className={`h-1.5 flex-1 rounded-full ${
-                            i < gIdx
-                              ? "bg-amber-500"
-                              : i === gIdx
-                                ? "bg-amber-300"
-                                : "bg-slate-200"
-                          }`}
-                        />
-                      ))}
-                    </div>
-
-                    {/* 问题 */}
-                    <div className="space-y-2">
-                      {step.knowledge_point && (
-                        <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-                          {step.knowledge_point}
-                        </span>
-                      )}
-                      <p className="text-base font-medium text-slate-900">
-                        {step.question}
-                      </p>
-                    </div>
-
-                    {/* 选项 */}
-                    <div className="space-y-2">
-                      {step.options.map((opt, i) => {
-                        const isCorrect = opt === step.correct_answer;
-                        const isPicked = chosen === opt;
-                        let cls =
-                          "border-slate-200 bg-white text-slate-700 hover:border-amber-400 hover:bg-amber-50";
-                        if (solved) {
-                          if (isCorrect)
-                            cls = "border-emerald-500 bg-emerald-50 text-emerald-800";
-                          else if (isPicked)
-                            cls = "border-red-400 bg-red-50 text-red-700";
-                          else cls = "border-slate-200 bg-white text-slate-400";
-                        } else if (isPicked) {
-                          cls = "border-red-400 bg-red-50 text-red-700";
-                        }
-                        return (
-                          <button
-                            key={i}
-                            type="button"
-                            disabled={solved}
-                            onClick={() => chooseOption(opt)}
-                            className={`flex w-full items-center gap-2.5 rounded-xl border px-4 py-2.5 text-left text-sm transition disabled:cursor-default ${cls}`}
-                          >
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-current text-xs font-semibold opacity-70">
-                              {String.fromCharCode(65 + i)}
-                            </span>
-                            <span className="flex-1">{opt}</span>
-                            {solved && isCorrect && <span>✅</span>}
-                            {!solved && isPicked && <span>❌</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* 反馈区 */}
-                    {chosen && !solved && (
-                      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-                        <p className="font-semibold">❌ 再想一想</p>
-                        {step.hint && <p className="mt-1">💡 {step.hint}</p>}
-                      </div>
-                    )}
-                    {solved && (
-                      <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                        <p className="text-sm font-semibold text-emerald-800">
-                          {gFirstCorrect[gIdx]
-                            ? "✅ 答对了！+1 分"
-                            : "✅ 答对了！"}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const s = [...gShowCard];
-                              s[gIdx] = !s[gIdx];
-                              setGShowCard(s);
-                            }}
-                            className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
-                          >
-                            {gShowCard[gIdx] ? "收起知识点卡片" : "查看知识点卡片"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={gotoNextStep}
-                            className="rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
-                          >
-                            {gIdx + 1 >= guide.steps.length
-                              ? "查看总结 →"
-                              : "下一步 →"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 知识点卡片（答错自动弹出，答对可手动展开） */}
-                    {gShowCard[gIdx] && (
-                      <div className="space-y-3">
-                        {stepCards.length > 0 ? (
-                          stepCards.map((card, i) => (
-                            <Card
-                              key={card.id ?? `${card.card_code}-${i}`}
-                              card={card}
-                            />
-                          ))
-                        ) : (
-                          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">
-                            这一步暂时没有对应的知识点卡片
-                          </p>
-                        )}
-                        {!solved && (
-                          <p className="text-center text-xs text-slate-500">
-                            看完知识点后，重新选择上方答案继续
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()
-            ) : (
-              /* 总结 */
-              <div className="space-y-4 rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm">
-                <p className="text-4xl">🎉</p>
-                <h3 className="text-lg font-bold text-slate-900">
-                  {gFirstCorrect.every(Boolean)
-                    ? "全部一次答对，太棒了！"
-                    : "全部完成，为你坚持思考点赞！"}
-                </h3>
-                <p className="text-sm text-slate-600">
-                  这道题考的是
-                  <span className="mx-1 font-semibold text-amber-600">
-                    {guide.topic || "综合语法"}
-                  </span>
-                  ，你答对了{" "}
-                  <span className="font-semibold text-emerald-600">
-                    {gFirstCorrect.filter(Boolean).length}
-                  </span>{" "}
-                  / {guide.steps.length} 步。
-                  {gFirstCorrect.every(Boolean)
-                    ? "这个知识点你掌握得很好！"
-                    : "答错的步骤已经展示了知识点卡片，建议再复习一遍。"}
-                </p>
-                <button
-                  type="button"
-                  onClick={resetResults}
-                  className="rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-amber-600"
-                >
-                  再来一题
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
         {mode === null && !analysisError && !busy && (
           <div className="py-16 text-center text-slate-400">
             <p className="text-4xl">✍️</p>
             <p className="mt-3 text-sm">
-              粘贴英文句子或上传错题图片，选择单题语法分析、作文分析或分步引导答题
+              粘贴英文句子或上传错题图片，选择单题语法分析或作文分析
             </p>
           </div>
         )}
