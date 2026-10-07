@@ -7,6 +7,8 @@ import { Mascot, type MascotMood } from "@/components/Mascot";
 import type { Exercise } from "@/lib/exercise";
 import { searchReferences, type ReferenceItem } from "@/lib/search";
 import type { User } from "@supabase/supabase-js";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 /** AI 分析返回的单个语法错误 */
 interface AnalysisError {
@@ -254,13 +256,10 @@ interface ExerciseState {
   checked: boolean[];
 }
 
-/** /api/explain 返回的知识点现场讲解 */
+/** /api/explain 返回的知识点微讲义（Markdown 全文） */
 interface KnowledgeExplain {
   knowledge_point: string;
-  rules: string;
-  examples: string;
-  confusions: string;
-  common_mistakes: string;
+  markdown: string;
 }
 
 /** 单题语法分析中每处错误的交互面板（讲解 + 练习），key 为错误下标 */
@@ -910,10 +909,7 @@ export default function AnalyzeTool({
                 explainOpen: true,
                 explain: {
                   knowledge_point: String(data?.knowledge_point ?? ""),
-                  rules: String(data?.rules ?? ""),
-                  examples: String(data?.examples ?? ""),
-                  confusions: String(data?.confusions ?? ""),
-                  common_mistakes: String(data?.common_mistakes ?? ""),
+                  markdown: String(data?.markdown ?? ""),
                 },
               },
             }
@@ -928,7 +924,7 @@ export default function AnalyzeTool({
                 ...p[idx],
                 explainBusy: false,
                 explainError:
-                  e instanceof Error ? e.message : "生成讲解失败，请重试",
+                  e instanceof Error ? e.message : "生成讲义失败，请重试",
               },
             }
           : p
@@ -970,6 +966,7 @@ export default function AnalyzeTool({
             [err.reason ?? err.explanation, err.suggestion]
               .filter(Boolean)
               .join("\n修改建议：") || "",
+          lesson: panel?.explain?.markdown ?? "",
           exclude: existed.map((ex) => ex.question),
           count: 3,
         }),
@@ -1096,10 +1093,7 @@ export default function AnalyzeTool({
                 explainOpen: true,
                 explain: {
                   knowledge_point: String(data?.knowledge_point ?? ""),
-                  rules: String(data?.rules ?? ""),
-                  examples: String(data?.examples ?? ""),
-                  confusions: String(data?.confusions ?? ""),
-                  common_mistakes: String(data?.common_mistakes ?? ""),
+                  markdown: String(data?.markdown ?? ""),
                 },
               },
             }
@@ -1114,7 +1108,7 @@ export default function AnalyzeTool({
                 ...p[-1],
                 explainBusy: false,
                 explainError:
-                  e instanceof Error ? e.message : "生成讲解失败，请重试",
+                  e instanceof Error ? e.message : "生成讲义失败，请重试",
               },
             }
           : p
@@ -1155,6 +1149,7 @@ export default function AnalyzeTool({
         body: JSON.stringify({
           knowledge_point: knowledgePoint,
           context,
+          lesson: panel?.explain?.markdown ?? "",
           exclude: existed.map((ex) => ex.question),
           count: 3,
         }),
@@ -2873,29 +2868,136 @@ function ExerciseList(props: {
   );
 }
 
-/** 知识点现场讲解（/api/explain）：规则 / 例句 / 易混淆点 / 常见错误 */
+/** 把微讲义 Markdown 按二级标题（## 一、…）切成若干小节 */
+function splitLessonSections(md: string): { title: string; body: string }[] {
+  const sections: { title: string; body: string }[] = [];
+  let title = "";
+  let body: string[] = [];
+  for (const line of md.split("\n")) {
+    const m = line.match(/^##\s+(.+?)\s*$/);
+    if (m) {
+      if (title) sections.push({ title, body: body.join("\n").trim() });
+      title = m[1];
+      body = [];
+    } else if (title) {
+      body.push(line);
+    }
+  }
+  if (title) sections.push({ title, body: body.join("\n").trim() });
+  return sections.filter((s) => s.title);
+}
+
+/** 小节图标：按标题关键字匹配 */
+function lessonSectionIcon(title: string): string {
+  if (title.includes("核心规则")) return "📐";
+  if (title.includes("例句")) return "📝";
+  if (title.includes("易错") || title.includes("坑")) return "⚠️";
+  if (title.includes("对比") || title.includes("表格")) return "📊";
+  if (title.includes("口诀")) return "💡";
+  return "📄";
+}
+
+/** Markdown 渲染样式：让讲义读起来像一页排版整洁的微型教材 */
+const LESSON_MD_COMPONENTS = {
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="my-1.5 text-sm leading-relaxed text-slate-700">{children}</p>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-violet-800">{children}</strong>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="my-1.5 list-disc space-y-1 pl-5 text-sm text-slate-700">
+      {children}
+    </ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="my-1.5 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+      {children}
+    </ol>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => (
+    <li className="leading-relaxed">{children}</li>
+  ),
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="my-2 overflow-x-auto">
+      <table className="w-full border-collapse text-xs">{children}</table>
+    </div>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="border border-violet-200 bg-violet-50 px-2 py-1.5 text-left font-semibold text-violet-900">
+      {children}
+    </th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="border border-violet-200 px-2 py-1.5 text-slate-700">
+      {children}
+    </td>
+  ),
+};
+
+/** 知识点微讲义（/api/explain）：Markdown 五段式讲义，核心规则与易错点默认展开，其余折叠 */
 function KnowledgeExplainView({ explain }: { explain: KnowledgeExplain }) {
-  const sections: { title: string; cls: string; body: string }[] = [
-    { title: "📐 核心规则", cls: "bg-slate-50 text-slate-700", body: explain.rules },
-    { title: "📝 例句", cls: "bg-emerald-50 text-emerald-900", body: explain.examples },
-    { title: "🔀 易混淆点", cls: "bg-amber-50 text-amber-900", body: explain.confusions },
-    { title: "⚠️ 常见错误", cls: "bg-rose-50 text-rose-900", body: explain.common_mistakes },
-  ];
+  const sections = splitLessonSections(explain.markdown);
+  // 默认展开"核心规则"和"易错点"，例句/表格/口诀折叠；解析失败时整篇直接展示
+  const defaultOpen = (t: string) =>
+    t.includes("核心规则") || t.includes("易错");
+  const [open, setOpen] = useState<boolean[]>(() =>
+    sections.map((s) => defaultOpen(s.title))
+  );
+
+  const md = (text: string) => (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={LESSON_MD_COMPONENTS}>
+      {text}
+    </ReactMarkdown>
+  );
+
   return (
-    <div className="space-y-2 rounded-xl border border-sky-200 bg-sky-50/40 p-3">
-      <p className="text-xs font-semibold text-sky-700">
-        📖 知识点讲解 · {explain.knowledge_point}
+    <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-[0_10px_36px_-14px_rgba(124,58,237,0.25)]">
+      <p className="mb-2 text-xs font-semibold text-violet-700">
+        📖 微讲义 · {explain.knowledge_point}
       </p>
-      {sections
-        .filter((s) => s.body.trim())
-        .map((s) => (
-          <div key={s.title} className={`rounded-lg px-3 py-2 ${s.cls}`}>
-            <p className="text-xs font-semibold opacity-70">{s.title}</p>
-            <p className="mt-1 text-sm whitespace-pre-line leading-relaxed">
-              {s.body}
-            </p>
-          </div>
-        ))}
+      {sections.length >= 3 ? (
+        <div className="space-y-2">
+          {sections.map((s, i) => {
+            const isOpen = open[i] ?? false;
+            return (
+              <div
+                key={s.title}
+                className="overflow-hidden rounded-xl border border-violet-100"
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    setOpen((prev) =>
+                      prev.map((v, j) => (j === i ? !v : v))
+                    )
+                  }
+                  className={`flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold transition ${
+                    isOpen
+                      ? "bg-violet-50 text-violet-800"
+                      : "bg-[#fbf9ff] text-slate-600 hover:bg-violet-50/60"
+                  }`}
+                >
+                  <span>
+                    {lessonSectionIcon(s.title)} {s.title}
+                  </span>
+                  <span className="text-[10px] text-violet-400">
+                    {isOpen ? "▲ 收起" : "▼ 展开"}
+                  </span>
+                </button>
+                {isOpen && (
+                  <div className="border-t border-violet-100 px-3 py-2">
+                    {md(s.body)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        // AI 未按五段标题输出时的兜底：整篇直接展示
+        <div className="px-1">{md(explain.markdown)}</div>
+      )}
     </div>
   );
 }

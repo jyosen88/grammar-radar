@@ -1,23 +1,68 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSupabase } from "@/lib/supabase";
 
-const SYSTEM_PROMPT = `你是一名经验丰富的中学英语老师。学生正在学习一道英语题，现在想深入了解这道题涉及的核心知识点。请你现场讲解，不允许说"请参考资料"之类的话。
+const SYSTEM_PROMPT = `你是一名经验丰富的中学英语老师。学生正在学习一道英语题，现在想深入了解这道题涉及的核心知识点。请你输出一份结构完整的"微讲义"，像一页微型教材一样，让学生读完就能彻底掌握这个知识点。不允许说"请参考资料"之类的话。
 
-讲解必须包含以下四个部分：
-1. rules（核心规则）：把这个知识点的规则讲清楚、讲完整。规则有多条时分条列出（用 1. 2. 3.），语言适合初中生理解，必要时给出公式化总结（如"either A or B 作主语，谓语随 B"）。
-2. examples（例句）：给出 2-3 个贴近中学生生活的正确例句，关键部分用【】标出，例如 Either you or I 【am】 wrong.
-3. confusions（易混淆点）：对比学生最容易搞混的相近用法（如 how far vs how long、就近一致 vs 就远一致、a/an 的判断依据是发音不是字母），用"✗ 错误 / ✓ 正确"的形式对比。
-4. common_mistakes（常见错误）：列出中国学生在这个知识点上最常犯的 2-3 个错误及提醒。
+讲义必须用 Markdown 格式输出，并且严格按以下五个部分组织，每部分用二级标题开头，标题文字一字不差：
 
-严格按照以下 JSON 格式返回，不要输出任何其他内容：
-{
-  "knowledge_point": "细化知识点名称",
-  "rules": "核心规则，多条用换行和数字编号",
-  "examples": "2-3 个正确例句，每个一行，关键部分用【】标出",
-  "confusions": "易混淆点对比，含 ✗/✓ 例句",
-  "common_mistakes": "2-3 个常见错误及提醒，每条一行"
+## 一、核心规则
+把这个知识点的规则讲清楚、讲完整。规则有多条时用有序列表分条列出，语言适合初中生理解，必要时给出公式化总结（如"either A or B 作主语，谓语随 B"）。规则内的关键术语用**加粗**标出。
+
+## 二、正误例句对照
+给出 3-4 组贴近中学生生活的例句对照，每组格式为：
+- ✅ 正确句（关键部分用**加粗**标出）
+- ❌ 错误句（后面用中文一句话说明错因）
+
+## 三、易错点与坑
+列出中国学生在这个知识点上最容易踩的 2-3 个坑，每条说明：坑是什么、为什么容易错、怎么避免。
+
+## 四、对比表格
+用 Markdown 表格对比最易混淆的用法。表格至少包含"用法/结构 | 含义 | 例句"三列（根据知识点可增删列名），行数 3-6 行。
+
+## 五、记忆口诀
+给出一句朗朗上口的中文口诀或顺口溜，帮助学生快速记住核心规则；口诀后用一句话解释口诀含义。
+
+要求：
+- 五个部分一个都不能少，顺序固定，除此之外不要输出任何其他文字
+- 全部讲解用中文，例句保持英文
+- 内容要具体、能直接当教材用，禁止空泛的套话
+- 对比表格必须是合法的 Markdown 表格语法（含 | --- | 分隔行）`;
+
+/** 规范化缓存键：去首尾空白，避免同一知识点因空格差异重复缓存 */
+function normalizeKey(kp: string): string {
+  return kp.trim().replace(/\s+/g, " ").slice(0, 200);
 }
 
-全部讲解用中文，例句保持英文。内容要具体，禁止空泛的套话。`;
+/** 读缓存：同一知识点已生成过讲义则直接返回；任何失败都静默降级（当作未命中） */
+async function readCachedLesson(key: string): Promise<string | null> {
+  try {
+    const { data, error } = await getSupabase()
+      .from("grammar_lessons")
+      .select("content")
+      .eq("knowledge_point", key)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data?.content) return null;
+    return String(data.content);
+  } catch {
+    return null;
+  }
+}
+
+/** 写缓存：失败静默（表可能还没建），不影响讲义返回 */
+async function saveLesson(key: string, content: string) {
+  try {
+    await getSupabase()
+      .from("grammar_lessons")
+      .upsert(
+        { knowledge_point: key, content },
+        { onConflict: "knowledge_point", ignoreDuplicates: true }
+      );
+  } catch {
+    /* 缓存失败不影响主流程 */
+  }
+}
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -48,13 +93,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "缺少知识点信息" }, { status: 400 });
   }
 
+  // 1) 先查缓存：同一知识点直接读库，不重复调 AI
+  const cacheKey = normalizeKey(
+    knowledgePoint || reason.slice(0, 120) || context.slice(0, 120)
+  );
+  const cached = await readCachedLesson(cacheKey);
+  if (cached) {
+    return NextResponse.json({
+      knowledge_point: cacheKey,
+      markdown: cached,
+      cached: true,
+    });
+  }
+
+  // 2) 缓存未命中，调 DeepSeek 生成微讲义
   let userContent: string;
   if (context.trim()) {
     // 无错误句子 / 选择题：结合完整题目上下文讲解核心考点
     userContent = `【题目上下文】${context.slice(0, 800)}
 【本题核心知识点】${knowledgePoint.slice(0, 200) || "请根据上下文自行提炼"}
 
-请结合这道题讲解核心知识点，例句可以涉及类似场景，但不要照抄题目原句。`;
+请结合这道题讲一份关于核心知识点的微讲义，例句可以涉及类似场景，但不要照抄题目原句。`;
   } else {
     // 传统错误讲解：结合具体错误片段
     userContent = `【要讲解的细化知识点】${knowledgePoint.slice(0, 200)}
@@ -62,7 +121,7 @@ export async function POST(req: NextRequest) {
 【正确写法】${corrected.slice(0, 300)}
 【该错误的原因与修改建议】${reason.slice(0, 500)}
 
-请结合学生这个具体错误来讲解（例句可以涉及类似场景，但不要照抄错误句）。`;
+请结合学生这个具体错误来讲一份微讲义（例句可以涉及类似场景，但不要照抄错误句）。`;
   }
 
   try {
@@ -78,9 +137,8 @@ export async function POST(req: NextRequest) {
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userContent },
         ],
-        response_format: { type: "json_object" },
         temperature: 0.3,
-        max_tokens: 2000,
+        max_tokens: 3000,
         stream: false,
       }),
     });
@@ -94,27 +152,30 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await res.json();
-    const content: string = data?.choices?.[0]?.message?.content ?? "";
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      const m = content.match(/\{[\s\S]*\}/);
-      if (!m) throw new Error("AI 返回内容无法解析为 JSON");
-      parsed = JSON.parse(m[0]);
+    let markdown: string = (data?.choices?.[0]?.message?.content ?? "").trim();
+    // 去掉 AI 偶尔包裹的 ```markdown 代码围栏
+    markdown = markdown
+      .replace(/^```(?:markdown)?\s*\n?/i, "")
+      .replace(/\n?```\s*$/i, "")
+      .trim();
+    if (!markdown) {
+      return NextResponse.json(
+        { error: "AI 没有生成有效的讲义内容，请重试" },
+        { status: 502 }
+      );
     }
 
-    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    // 3) 写入缓存（失败静默）
+    await saveLesson(cacheKey, markdown);
+
     return NextResponse.json({
-      knowledge_point: str(parsed.knowledge_point) || knowledgePoint,
-      rules: str(parsed.rules),
-      examples: str(parsed.examples),
-      confusions: str(parsed.confusions),
-      common_mistakes: str(parsed.common_mistakes),
+      knowledge_point: cacheKey,
+      markdown,
+      cached: false,
     });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "生成讲解失败，请重试" },
+      { error: e instanceof Error ? e.message : "生成讲义失败，请重试" },
       { status: 500 }
     );
   }

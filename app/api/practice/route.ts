@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
   let corrected = "";
   let reason = "";
   let context = "";
+  let lesson = "";
   let exclude: unknown = [];
   let count = 3;
   try {
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest) {
     corrected = typeof body?.corrected === "string" ? body.corrected : "";
     reason = typeof body?.reason === "string" ? body.reason : "";
     context = typeof body?.context === "string" ? body.context : "";
+    lesson = typeof body?.lesson === "string" ? body.lesson : "";
     exclude = Array.isArray(body?.exclude) ? body.exclude : [];
     if (typeof body?.count === "number" && Number.isFinite(body.count)) {
       count = Math.min(5, Math.max(1, Math.round(body.count)));
@@ -81,10 +83,15 @@ export async function POST(req: NextRequest) {
     .map((q) => q.trim())
     .slice(0, 30);
 
+  // 学生刚看完的微讲义：有则作为出题的唯一范围依据，优先级最高
+  const lessonBlock = lesson.trim()
+    ? `【知识点微讲义（学生刚学过，题目必须严格基于这份讲义覆盖的规则和用法，不得超出讲义范围）】\n${lesson.slice(0, 3000)}\n`
+    : "";
+
   let userContent: string;
   if (context.trim()) {
     // 无错误句子 / 选择题：基于完整题目上下文和核心考点出题
-    userContent = `【题目上下文】${context.slice(0, 800)}
+    userContent = `${lessonBlock}【题目上下文】${context.slice(0, 800)}
 【本题核心知识点】${knowledgePoint.slice(0, 200) || "请根据上下文自行提炼"}
 ${
   excludeList.length
@@ -96,7 +103,7 @@ ${
 请恰好生成 ${count} 道变式练习题。`;
   } else {
     // 传统错误模式：基于具体错误片段出题
-    userContent = `【细化知识点】${knowledgePoint.slice(0, 200) || reason.slice(0, 200)}
+    userContent = `${lessonBlock}【细化知识点】${knowledgePoint.slice(0, 200) || reason.slice(0, 200)}
 【学生作文里的错误片段】${original.slice(0, 300)}
 【正确写法】${corrected.slice(0, 300)}
 【错误原因与修改建议】${reason.slice(0, 600)}
