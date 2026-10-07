@@ -114,6 +114,114 @@ const ESSAY_SCOPE_GROUPS: { group: string; items: string[] }[] = [
   { group: "出国考试", items: ["雅思", "托福"] },
 ];
 
+/** 写作类型自定义下拉：文字在按钮内绝对居中（箭头绝对定位在右侧，不占居中空间） */
+function EssayTypeSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部 / Esc 关闭
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative w-full sm:w-40">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="relative flex h-10 w-full items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {/* 文字在整按钮宽度内绝对居中 */}
+        <span className="truncate">{value || "写作类型"}</span>
+        {/* 箭头绝对贴右，不参与居中布局；展开时翻转 */}
+        <svg
+          className={`absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          className="absolute top-full left-0 z-30 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+        >
+          {/* 首项：写作类型（重置为默认中考标准） */}
+          <button
+            type="button"
+            role="option"
+            aria-selected={value === ""}
+            onClick={() => {
+              onChange("");
+              setOpen(false);
+            }}
+            className={`block w-full px-3 py-1.5 text-left text-sm transition hover:bg-indigo-50 ${
+              value === "" ? "bg-indigo-50 font-semibold text-indigo-700" : "text-slate-700"
+            }`}
+          >
+            写作类型
+          </button>
+          <div className="mx-2 my-1 border-t border-slate-100" />
+          {ESSAY_SCOPE_GROUPS.map((g) => (
+            <div key={g.group}>
+              <p className="px-3 pt-1 pb-0.5 text-xs font-semibold text-slate-400">{g.group}</p>
+              {g.items.map((it) => (
+                <button
+                  key={it}
+                  type="button"
+                  role="option"
+                  aria-selected={value === it}
+                  onClick={() => {
+                    onChange(it);
+                    setOpen(false);
+                  }}
+                  className={`block w-full px-3 py-1.5 text-left text-sm transition hover:bg-indigo-50 ${
+                    value === it ? "font-semibold text-indigo-700" : "text-slate-700"
+                  }`}
+                >
+                  {it}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 等级徽章配色 */
 function levelBadgeClass(level: EvalLevel): string {
   switch (level) {
@@ -1392,23 +1500,11 @@ export default function AnalyzeTool({
             </p>
             {/* 工具行：手机端上下排列各占满整行，sm 以上并排且两框等宽同高 */}
             <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
-              <select
+              <EssayTypeSelect
                 value={essayScope}
-                onChange={(e) => setEssayScope(e.target.value)}
+                onChange={setEssayScope}
                 disabled={busy}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-center text-sm font-medium text-slate-700 outline-none transition hover:bg-slate-100 focus:border-indigo-400 disabled:opacity-60 sm:w-40 [&>option]:text-left [&>optgroup]:text-left"
-              >
-                <option value="">写作类型</option>
-                {ESSAY_SCOPE_GROUPS.map((g) => (
-                  <optgroup key={g.group} label={g.group}>
-                    {g.items.map((it) => (
-                      <option key={it} value={it}>
-                        {it}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+              />
               <input
                 ref={topicFileInputRef}
                 type="file"
