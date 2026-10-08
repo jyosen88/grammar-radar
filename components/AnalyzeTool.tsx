@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { getSupabase, getStoredSession } from "@/lib/supabase";
@@ -270,6 +270,7 @@ interface AnalyzePanel extends ExerciseState {
   explainError?: string;
   exBusy: boolean; // 生成练习题请求中
   exercises: Exercise[];
+  exerciseKp?: string; // 本面板练习题考查的知识点标签（用于"本题考查"展示）
   exError?: string;
 }
 
@@ -877,6 +878,7 @@ export default function AnalyzeTool({
         explainBusy: true,
         explainOpen: true,
         exercises: p[idx]?.exercises ?? [],
+        exerciseKp: p[idx]?.exerciseKp,
         picked: p[idx]?.picked ?? [],
         fillText: p[idx]?.fillText ?? [],
         checked: p[idx]?.checked ?? [],
@@ -948,6 +950,7 @@ export default function AnalyzeTool({
         exBusy: true,
         exError: undefined,
         exercises: p[idx]?.exercises ?? [],
+        exerciseKp: p[idx]?.exerciseKp,
         picked: p[idx]?.picked ?? [],
         fillText: p[idx]?.fillText ?? [],
         checked: p[idx]?.checked ?? [],
@@ -984,6 +987,11 @@ export default function AnalyzeTool({
           [idx]: {
             ...cur,
             exBusy: false,
+            exerciseKp:
+              cur.exerciseKp ||
+              (typeof data?.knowledge_point === "string" && data.knowledge_point) ||
+              err.knowledge_point ||
+              "",
             exercises: [...cur.exercises, ...more],
             picked: [...cur.picked, ...more.map(() => null)],
             fillText: [...cur.fillText, ...more.map(() => "")],
@@ -1060,6 +1068,7 @@ export default function AnalyzeTool({
         explainBusy: true,
         explainOpen: true,
         exercises: p[-1]?.exercises ?? [],
+        exerciseKp: p[-1]?.exerciseKp,
         picked: p[-1]?.picked ?? [],
         fillText: p[-1]?.fillText ?? [],
         checked: p[-1]?.checked ?? [],
@@ -1130,6 +1139,7 @@ export default function AnalyzeTool({
         exBusy: true,
         exError: undefined,
         exercises: p[-1]?.exercises ?? [],
+        exerciseKp: p[-1]?.exerciseKp,
         picked: p[-1]?.picked ?? [],
         fillText: p[-1]?.fillText ?? [],
         checked: p[-1]?.checked ?? [],
@@ -1167,6 +1177,11 @@ export default function AnalyzeTool({
           [-1]: {
             ...cur,
             exBusy: false,
+            exerciseKp:
+              cur.exerciseKp ||
+              (typeof data?.knowledge_point === "string" && data.knowledge_point) ||
+              knowledgePoint ||
+              "",
             exercises: [...cur.exercises, ...more],
             picked: [...cur.picked, ...more.map(() => null)],
             fillText: [...cur.fillText, ...more.map(() => "")],
@@ -2268,6 +2283,11 @@ export default function AnalyzeTool({
             )}
             {analyzePanels[-1] && analyzePanels[-1].exercises.length > 0 && (
               <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+                {analyzePanels[-1].exerciseKp && (
+                  <div className="rounded-lg bg-indigo-50 px-3 py-1.5 text-center text-sm font-medium text-indigo-700">
+                    📚 本题考查：{analyzePanels[-1].exerciseKp}
+                  </div>
+                )}
                 <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
                   <ExerciseList
                     exercises={analyzePanels[-1].exercises}
@@ -2401,6 +2421,11 @@ export default function AnalyzeTool({
                 )}
                 {analyzePanels[-1] && analyzePanels[-1].exercises.length > 0 && (
                   <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+                    {analyzePanels[-1].exerciseKp && (
+                      <div className="rounded-lg bg-indigo-50 px-3 py-1.5 text-center text-sm font-medium text-indigo-700">
+                        📚 本题考查：{analyzePanels[-1].exerciseKp}
+                      </div>
+                    )}
                     <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
                       <ExerciseList
                         exercises={analyzePanels[-1].exercises}
@@ -2589,6 +2614,11 @@ export default function AnalyzeTool({
                       )}
                       {panel && aExercises.length > 0 && (
                         <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+                          {(panel.exerciseKp || err.knowledge_point) && (
+                            <div className="rounded-lg bg-indigo-50 px-3 py-1.5 text-center text-sm font-medium text-indigo-700">
+                              📚 本题考查：{panel.exerciseKp || err.knowledge_point}
+                            </div>
+                          )}
                           <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3">
                             <ExerciseList
                               exercises={aExercises}
