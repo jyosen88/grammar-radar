@@ -901,6 +901,7 @@ export default function AnalyzeTool({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "生成讲解失败");
+      const markdown = String(data?.markdown ?? "");
       setAnalyzePanels((p) =>
         p[idx]
           ? {
@@ -911,12 +912,14 @@ export default function AnalyzeTool({
                 explainOpen: true,
                 explain: {
                   knowledge_point: String(data?.knowledge_point ?? ""),
-                  markdown: String(data?.markdown ?? ""),
+                  markdown,
                 },
               },
             }
           : p
       );
+      // 讲义生成成功后，后台并行预生成 3 道练习题（带讲义内容，用户点开即看）
+      if (markdown) void handleAnalyzeExercises(idx, markdown);
     } catch (e) {
       setAnalyzePanels((p) =>
         p[idx]
@@ -935,7 +938,7 @@ export default function AnalyzeTool({
   }
 
   /** "举一反三练习 / 生成更多练习题"：每次固定生成 3 道，追加并排除已出题 */
-  async function handleAnalyzeExercises(idx: number) {
+  async function handleAnalyzeExercises(idx: number, lessonOverride?: string) {
     if (!analysisErrors) return;
     const err = analysisErrors[idx];
     const panel = analyzePanels[idx];
@@ -969,7 +972,7 @@ export default function AnalyzeTool({
             [err.reason ?? err.explanation, err.suggestion]
               .filter(Boolean)
               .join("\n修改建议：") || "",
-          lesson: panel?.explain?.markdown ?? "",
+          lesson: lessonOverride ?? panel?.explain?.markdown ?? "",
           exclude: existed.map((ex) => ex.question),
           count: 3,
         }),
@@ -1092,6 +1095,7 @@ export default function AnalyzeTool({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "生成讲解失败");
+      const markdown = String(data?.markdown ?? "");
       setAnalyzePanels((p) =>
         p[-1]
           ? {
@@ -1102,12 +1106,14 @@ export default function AnalyzeTool({
                 explainOpen: true,
                 explain: {
                   knowledge_point: String(data?.knowledge_point ?? ""),
-                  markdown: String(data?.markdown ?? ""),
+                  markdown,
                 },
               },
             }
           : p
       );
+      // 讲义生成成功后，后台并行预生成 3 道练习题
+      if (markdown) void handleGeneralExercises(markdown);
     } catch (e) {
       setAnalyzePanels((p) =>
         p[-1]
@@ -1126,7 +1132,7 @@ export default function AnalyzeTool({
   }
 
   /** 无错误句子 / 选择题场景：生成举一反三练习题 */
-  async function handleGeneralExercises() {
+  async function handleGeneralExercises(lessonOverride?: string) {
     const panel = analyzePanels[-1];
     if (panel?.exBusy) return;
 
@@ -1159,7 +1165,7 @@ export default function AnalyzeTool({
         body: JSON.stringify({
           knowledge_point: knowledgePoint,
           context,
-          lesson: panel?.explain?.markdown ?? "",
+          lesson: lessonOverride ?? panel?.explain?.markdown ?? "",
           exclude: existed.map((ex) => ex.question),
           count: 3,
         }),
@@ -2247,16 +2253,29 @@ export default function AnalyzeTool({
                     : "📖 更多知识点讲解"}
               </button>
               {(analyzePanels[-1]?.exercises.length ?? 0) === 0 && (
-                <button
-                  type="button"
-                  onClick={handleGeneralExercises}
-                  disabled={analyzePanels[-1]?.exBusy}
-                  className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
-                >
-                  {analyzePanels[-1]?.exBusy
-                    ? "正在生成 3 道练习题…"
-                    : "🎯 举一反三练习"}
-                </button>
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleGeneralExercises()}
+                    disabled={
+                      analyzePanels[-1]?.exBusy || !analyzePanels[-1]?.explain
+                    }
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                      analyzePanels[-1]?.explain
+                        ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                        : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                    } disabled:opacity-60`}
+                  >
+                    {analyzePanels[-1]?.exBusy
+                      ? "正在生成 3 道练习题…"
+                      : "🎯 举一反三练习"}
+                  </button>
+                  {!analyzePanels[-1]?.explain && (
+                    <p className="text-xs text-slate-400">
+                      🔒 请先查看知识点讲解，效果更好
+                    </p>
+                  )}
+                </div>
               )}
             </div>
 
@@ -2313,7 +2332,7 @@ export default function AnalyzeTool({
                       <div className="space-y-1.5 border-t border-slate-100 pt-3 text-center">
                         <button
                           type="button"
-                          onClick={handleGeneralExercises}
+                          onClick={() => handleGeneralExercises()}
                           disabled={analyzePanels[-1].exBusy}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                         >
@@ -2385,16 +2404,29 @@ export default function AnalyzeTool({
                         : "📖 这道题考什么？点这里深入了解"}
                   </button>
                   {(analyzePanels[-1]?.exercises.length ?? 0) === 0 && (
-                    <button
-                      type="button"
-                      onClick={handleGeneralExercises}
-                      disabled={analyzePanels[-1]?.exBusy}
-                      className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
-                    >
-                      {analyzePanels[-1]?.exBusy
-                        ? "正在生成 3 道练习题…"
-                        : "🎯 举一反三练习"}
-                    </button>
+                    <div className="flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleGeneralExercises()}
+                        disabled={
+                          analyzePanels[-1]?.exBusy || !analyzePanels[-1]?.explain
+                        }
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                          analyzePanels[-1]?.explain
+                            ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                            : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                        } disabled:opacity-60`}
+                      >
+                        {analyzePanels[-1]?.exBusy
+                          ? "正在生成 3 道练习题…"
+                          : "🎯 举一反三练习"}
+                      </button>
+                      {!analyzePanels[-1]?.explain && (
+                        <p className="text-xs text-slate-400">
+                          🔒 请先查看知识点讲解，效果更好
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -2451,7 +2483,7 @@ export default function AnalyzeTool({
                           <div className="space-y-1.5 border-t border-slate-100 pt-3 text-center">
                             <button
                               type="button"
-                              onClick={handleGeneralExercises}
+                              onClick={() => handleGeneralExercises()}
                               disabled={analyzePanels[-1].exBusy}
                               className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3.5 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                             >
@@ -2578,18 +2610,29 @@ export default function AnalyzeTool({
                                 : "📖 更多知识点讲解"
                               : "📖 更多知识点讲解"}
                         </button>
-                        {/* 还没有题目时显示"举一反三练习"；题目生成后这个按钮移到练习区底部 */}
+                        {/* 还没有题目时显示"举一反三练习"；题目生成后这个按钮移到练习区底部。未看讲解前锁定 */}
                         {aExercises.length === 0 && (
-                          <button
-                            type="button"
-                            onClick={() => handleAnalyzeExercises(i)}
-                            disabled={panel?.exBusy}
-                            className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-60"
-                          >
-                            {panel?.exBusy
-                              ? "正在生成 3 道练习题…"
-                              : "🎯 举一反三练习"}
-                          </button>
+                          <div className="flex flex-col gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleAnalyzeExercises(i)}
+                              disabled={panel?.exBusy || !panel?.explain}
+                              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                                panel?.explain
+                                  ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                                  : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                              } disabled:opacity-60`}
+                            >
+                              {panel?.exBusy
+                                ? "正在生成 3 道练习题…"
+                                : "🎯 举一反三练习"}
+                            </button>
+                            {!panel?.explain && (
+                              <p className="text-xs text-slate-400">
+                                🔒 请先查看知识点讲解，效果更好
+                              </p>
+                            )}
+                          </div>
                         )}
                       </div>
 
