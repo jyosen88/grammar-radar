@@ -43,6 +43,7 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
 1.【扣题判断】：对照题目要求，判断作文是否切题。检查：主题是否一致、题目列出的内容要点是否都有覆盖、词数是否明显不达标（如果题目给了词数要求）。
 2.【一句话总评】：用一句话概括这篇作文的整体水平，要让学生一眼知道自己处在什么位置。要求：①结合写作类型，允许且鼓励指出"超出预期"，如"语言水平远超中考要求，词汇和句式接近高考优秀水平"；②有依据（点明主要优点和最主要短板），不要空泛夸；③只有一句话。
 3.【逐处语法错误】：找出作文中所有语法错误。判定标准以中国中考、高考英语语法为基础，硬性考点一律判错，严禁以"口语中常见"为由放过。
+   【铁律·逐句检查】无论用户选择什么写作范围/学段（包括七上、KET 等低年级），你都必须逐句检查基础语法错误，至少覆盖以下类别：动词时态、主谓一致、名词单复数、拼写大小写、冠词用法、介词搭配、形容词副词比较级。只要作文里存在这些错误，就必须全部找出来并逐一列入 errors，严禁以"低年级不要求"或"口语中可接受"为由忽略任何一处。errors 不能为空数组，除非作文确实零语法错误。
 4.【按评分维度打分】：按写作类型指定的评分维度逐项给出等级评价和一句结合作文具体内容的理由。等级共五档：
    - 超出预期：作文在这一维度明显超出该学段/该考试的平均要求。例如中考作文中准确、自然地使用高考甚至雅思水平的词汇（如 nevertheless、be accustomed to、sacrifice...for...）、复杂句式（如定语从句叠加非谓语、倒装、强调句、with 复合结构），且没有语法错误、不是生硬炫技。
    - 优秀：扎实达到该范围的上限要求，表达准确、丰富、自然，仅有极小瑕疵。
@@ -73,23 +74,8 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
 
 ③ 现场出 2 道针对性练习题（exercises）：与该错误考同一个细化知识点，但换场景换句式、不照抄原句；中考难度；单项选择题（选项 2-4 个）或填空题（空格用 ____）；每题给正确答案和一句中文解析；不要在题干或解析中暴露学生的错误句子。
 
-严格按照以下 JSON 格式返回，不要输出任何其他内容：
+严格按照以下 JSON 格式返回，不要输出任何其他内容。注意：errors 必须放在最前面输出，确保即使输出被截断也能保留所有语法错误：
 {
-  "on_topic": {
-    "is_on_topic": true 或 false,
-    "comment": "扣题情况说明"
-  },
-  "overall_summary": "一句话总评，概括整体水平",
-  "scores": [
-    { "name": "评分维度名（与写作类型指定的维度一致）", "level": "超出预期/优秀/良好/一般/待提高", "comment": "一句结合作文具体内容的理由" }
-  ],
-  "highlights": [
-    { "text": "作文原文中的亮点词汇/短语/句子", "kind": "亮点词汇 或 亮点句式", "level": "中考内的精彩运用 / 已达到高考水平 / 已达到雅思水平 等", "note": "一句中文说明好在哪里" }
-  ],
-  "improvements": [
-    { "issue": "哪里需要改：引用原文片段或指出具体位置", "suggestion": "改成什么/怎么改：给可直接使用的英文或具体做法" }
-  ],
-  "model_essay": "参考范文（纯英文，按写作类型的词汇和句式难度写）",
   "errors": [
     {
       "original": "出错的原文片段",
@@ -108,7 +94,22 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
         }
       ]
     }
-  ]
+  ],
+  "on_topic": {
+    "is_on_topic": true 或 false,
+    "comment": "扣题情况说明"
+  },
+  "overall_summary": "一句话总评，概括整体水平",
+  "scores": [
+    { "name": "评分维度名（与写作类型指定的维度一致）", "level": "超出预期/优秀/良好/一般/待提高", "comment": "一句结合作文具体内容的理由" }
+  ],
+  "highlights": [
+    { "text": "作文原文中的亮点词汇/短语/句子", "kind": "亮点词汇 或 亮点句式", "level": "中考内的精彩运用 / 已达到高考水平 / 已达到雅思水平 等", "note": "一句中文说明好在哪里" }
+  ],
+  "improvements": [
+    { "issue": "哪里需要改：引用原文片段或指出具体位置", "suggestion": "改成什么/怎么改：给可直接使用的英文或具体做法" }
+  ],
+  "model_essay": "参考范文（纯英文，按写作类型的词汇和句式难度写）"
 }
 
 规则：
@@ -169,7 +170,7 @@ export async function POST(req: NextRequest) {
         ],
         response_format: { type: "json_object" },
         temperature: 0,
-        max_tokens: 9000, // 每处错误自带 2 道题，外加亮点与改进建议，需要较大输出空间
+        max_tokens: 16000, // 每处错误自带 2 道题，外加亮点/改进建议/整篇范文，长作文需要足够空间避免截断
         stream: false,
       }),
     });
@@ -184,7 +185,11 @@ export async function POST(req: NextRequest) {
 
     const data = await res.json();
     const content: string = data?.choices?.[0]?.message?.content ?? "";
-    const parsed = parseLooseJson(content) as {
+    const finishReason = data?.choices?.[0]?.finish_reason;
+
+    // 容错解析：JSON 可能因 max_tokens 截断而不完整。errors 已放在 JSON 最前，
+    // 因此即使整体解析失败，也尽量单独提取 errors 数组，避免前端显示 0 处错误。
+    let parsed: {
       on_topic?: unknown;
       overall_summary?: unknown;
       scores?: unknown;
@@ -192,7 +197,23 @@ export async function POST(req: NextRequest) {
       improvements?: unknown;
       model_essay?: unknown;
       errors?: unknown;
-    };
+    } = {};
+    try {
+      parsed = parseLooseJson(content) as typeof parsed;
+    } catch {
+      // 整体 JSON 解析失败，尝试只提取 errors 数组（放在最前面，截断时仍可能完整）
+      try {
+        const m = content.match(/"errors"\s*:\s*(\[[\s\S]*?\n\s*\])/);
+        if (m) parsed.errors = JSON.parse(m[1]);
+      } catch {
+        parsed.errors = [];
+      }
+      // 截断导致后续字段缺失，errors 优先保留即可
+    }
+    // 如果是 length（max_tokens 截断）且 errors 仍为空，记录一下便于排查
+    if (finishReason === "length" && (!Array.isArray(parsed.errors) || parsed.errors.length === 0)) {
+      console.warn("[essay] AI 输出被 max_tokens 截断且 errors 为空");
+    }
 
     const LEVELS = ["超出预期", "优秀", "良好", "一般", "待提高"];
     const cleanLevel = (v: unknown) =>
