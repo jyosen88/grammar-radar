@@ -2224,54 +2224,6 @@ export default function AnalyzeTool({
               </div>
             )}
 
-            {/* 逐项分析 */}
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-slate-400">
-                逐个选项分析
-              </p>
-              <ul className="space-y-2">
-                {quizSolution.options.map((opt) => (
-                  <li
-                    key={opt.letter}
-                    className={`rounded-lg border px-3 py-2 ${
-                      opt.is_correct
-                        ? "border-emerald-200 bg-emerald-50/60"
-                        : "border-slate-200 bg-slate-50/60"
-                    }`}
-                  >
-                    <p className="flex items-start gap-2 text-sm">
-                      <span
-                        className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                          opt.is_correct
-                            ? "bg-emerald-600 text-white"
-                            : "bg-slate-300 text-white"
-                        }`}
-                      >
-                        {opt.letter}
-                      </span>
-                      <span className="font-medium text-slate-800">
-                        {opt.text}
-                      </span>
-                      <span
-                        className={`ml-auto shrink-0 text-xs font-semibold ${
-                          opt.is_correct
-                            ? "text-emerald-600"
-                            : "text-slate-400"
-                        }`}
-                      >
-                        {opt.is_correct ? "✓ 正确" : "✗ 错误"}
-                      </span>
-                    </p>
-                    {opt.analysis && (
-                      <p className="mt-1 pl-7 text-xs leading-5 text-slate-600">
-                        {opt.analysis}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
             {/* 选择题模式下也提供知识点讲解与举一反三练习 */}
             <div className="flex flex-wrap gap-2 pt-2">
               <button
