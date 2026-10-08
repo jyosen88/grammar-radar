@@ -271,6 +271,7 @@ interface AnalyzePanel extends ExerciseState {
   exBusy: boolean; // 生成练习题请求中
   exercises: Exercise[];
   exerciseKp?: string; // 本面板练习题考查的知识点标签（用于"本题考查"展示）
+  exOpen?: boolean; // 练习区是否展开（有题目后由顶部按钮控制）
   exError?: string;
 }
 
@@ -879,6 +880,7 @@ export default function AnalyzeTool({
         explainOpen: true,
         exercises: p[idx]?.exercises ?? [],
         exerciseKp: p[idx]?.exerciseKp,
+        exOpen: p[idx]?.exOpen ?? false,
         picked: p[idx]?.picked ?? [],
         fillText: p[idx]?.fillText ?? [],
         checked: p[idx]?.checked ?? [],
@@ -918,8 +920,8 @@ export default function AnalyzeTool({
             }
           : p
       );
-      // 讲义生成成功后，后台并行预生成 3 道练习题（带讲义内容，用户点开即看）
-      if (markdown) void handleAnalyzeExercises(idx, markdown);
+      // 讲义生成成功后，后台并行预生成 3 道练习题（带讲义内容，保持收起，用户点开即看）
+      if (markdown) void handleAnalyzeExercises(idx, markdown, false);
     } catch (e) {
       setAnalyzePanels((p) =>
         p[idx]
@@ -937,8 +939,8 @@ export default function AnalyzeTool({
     }
   }
 
-  /** "举一反三练习 / 生成更多练习题"：每次固定生成 3 道，追加并排除已出题 */
-  async function handleAnalyzeExercises(idx: number, lessonOverride?: string) {
+  /** "举一反三练习 / 生成更多练习题"：每次固定生成 3 道，追加并排除已出题。autoOpen=false 用于看讲解后后台预生成（保持收起，用户点开才展示） */
+  async function handleAnalyzeExercises(idx: number, lessonOverride?: string, autoOpen = true) {
     if (!analysisErrors) return;
     const err = analysisErrors[idx];
     const panel = analyzePanels[idx];
@@ -954,6 +956,7 @@ export default function AnalyzeTool({
         exError: undefined,
         exercises: p[idx]?.exercises ?? [],
         exerciseKp: p[idx]?.exerciseKp,
+        exOpen: p[idx]?.exOpen ?? false,
         picked: p[idx]?.picked ?? [],
         fillText: p[idx]?.fillText ?? [],
         checked: p[idx]?.checked ?? [],
@@ -990,6 +993,7 @@ export default function AnalyzeTool({
           [idx]: {
             ...cur,
             exBusy: false,
+            exOpen: autoOpen ? true : (cur.exOpen ?? false),
             exerciseKp:
               cur.exerciseKp ||
               (typeof data?.knowledge_point === "string" && data.knowledge_point) ||
@@ -1072,6 +1076,7 @@ export default function AnalyzeTool({
         explainOpen: true,
         exercises: p[-1]?.exercises ?? [],
         exerciseKp: p[-1]?.exerciseKp,
+        exOpen: p[-1]?.exOpen ?? false,
         picked: p[-1]?.picked ?? [],
         fillText: p[-1]?.fillText ?? [],
         checked: p[-1]?.checked ?? [],
@@ -1112,8 +1117,8 @@ export default function AnalyzeTool({
             }
           : p
       );
-      // 讲义生成成功后，后台并行预生成 3 道练习题
-      if (markdown) void handleGeneralExercises(markdown);
+      // 讲义生成成功后，后台并行预生成 3 道练习题（保持收起，用户点开即看）
+      if (markdown) void handleGeneralExercises(markdown, false);
     } catch (e) {
       setAnalyzePanels((p) =>
         p[-1]
@@ -1132,7 +1137,7 @@ export default function AnalyzeTool({
   }
 
   /** 无错误句子 / 选择题场景：生成举一反三练习题 */
-  async function handleGeneralExercises(lessonOverride?: string) {
+  async function handleGeneralExercises(lessonOverride?: string, autoOpen = true) {
     const panel = analyzePanels[-1];
     if (panel?.exBusy) return;
 
@@ -1146,6 +1151,7 @@ export default function AnalyzeTool({
         exError: undefined,
         exercises: p[-1]?.exercises ?? [],
         exerciseKp: p[-1]?.exerciseKp,
+        exOpen: p[-1]?.exOpen ?? false,
         picked: p[-1]?.picked ?? [],
         fillText: p[-1]?.fillText ?? [],
         checked: p[-1]?.checked ?? [],
@@ -1183,6 +1189,7 @@ export default function AnalyzeTool({
           [-1]: {
             ...cur,
             exBusy: false,
+            exOpen: autoOpen ? true : (cur.exOpen ?? false),
             exerciseKp:
               cur.exerciseKp ||
               (typeof data?.knowledge_point === "string" && data.knowledge_point) ||
@@ -2252,31 +2259,44 @@ export default function AnalyzeTool({
                       : "📖 更多知识点讲解"
                     : "📖 更多知识点讲解"}
               </button>
-              {(analyzePanels[-1]?.exercises.length ?? 0) === 0 && (
-                <div className="flex flex-col gap-1">
-                  <button
-                    type="button"
-                    onClick={() => handleGeneralExercises()}
-                    disabled={
-                      analyzePanels[-1]?.exBusy || !analyzePanels[-1]?.explain
+              <div className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const p = analyzePanels[-1];
+                    if ((p?.exercises.length ?? 0) > 0) {
+                      setAnalyzePanels((prev) =>
+                        prev[-1]
+                          ? { ...prev, [-1]: { ...prev[-1], exOpen: !prev[-1].exOpen } }
+                          : prev
+                      );
+                    } else {
+                      void handleGeneralExercises();
                     }
-                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                      analyzePanels[-1]?.explain
-                        ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
-                        : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                    } disabled:opacity-60`}
-                  >
-                    {analyzePanels[-1]?.exBusy
-                      ? "正在生成 3 道练习题…"
+                  }}
+                  disabled={
+                    analyzePanels[-1]?.exBusy || !analyzePanels[-1]?.explain
+                  }
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                    analyzePanels[-1]?.explain
+                      ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                      : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                  } disabled:opacity-60`}
+                >
+                  {analyzePanels[-1]?.exBusy
+                    ? "正在生成 3 道练习题…"
+                    : (analyzePanels[-1]?.exercises.length ?? 0) > 0
+                      ? analyzePanels[-1].exOpen
+                        ? "🎯 收起练习"
+                        : "🎯 举一反三练习（已就绪，点击查看）"
                       : "🎯 举一反三练习"}
-                  </button>
-                  {!analyzePanels[-1]?.explain && (
-                    <p className="text-xs text-slate-400">
-                      🔒 请先查看知识点讲解，效果更好
-                    </p>
-                  )}
-                </div>
-              )}
+                </button>
+                {!analyzePanels[-1]?.explain && (
+                  <p className="text-xs text-slate-400">
+                    🔒 请先查看知识点讲解，效果更好
+                  </p>
+                )}
+              </div>
             </div>
 
             {analyzePanels[-1]?.explainError && (
@@ -2300,7 +2320,7 @@ export default function AnalyzeTool({
                 ⚠️ {analyzePanels[-1].exError}
               </p>
             )}
-            {analyzePanels[-1] && analyzePanels[-1].exercises.length > 0 && (
+            {analyzePanels[-1] && analyzePanels[-1].exOpen && analyzePanels[-1].exercises.length > 0 && (
               <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
                 {analyzePanels[-1].exerciseKp && (
                   <div className="rounded-lg bg-indigo-50 px-3 py-1.5 text-center text-sm font-medium text-indigo-700">
@@ -2403,31 +2423,44 @@ export default function AnalyzeTool({
                           : "📖 这道题考什么？点这里深入了解"
                         : "📖 这道题考什么？点这里深入了解"}
                   </button>
-                  {(analyzePanels[-1]?.exercises.length ?? 0) === 0 && (
-                    <div className="flex flex-col gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleGeneralExercises()}
-                        disabled={
-                          analyzePanels[-1]?.exBusy || !analyzePanels[-1]?.explain
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const p = analyzePanels[-1];
+                        if ((p?.exercises.length ?? 0) > 0) {
+                          setAnalyzePanels((prev) =>
+                            prev[-1]
+                              ? { ...prev, [-1]: { ...prev[-1], exOpen: !prev[-1].exOpen } }
+                              : prev
+                          );
+                        } else {
+                          void handleGeneralExercises();
                         }
-                        className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                          analyzePanels[-1]?.explain
-                            ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
-                            : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                        } disabled:opacity-60`}
-                      >
-                        {analyzePanels[-1]?.exBusy
-                          ? "正在生成 3 道练习题…"
+                      }}
+                      disabled={
+                        analyzePanels[-1]?.exBusy || !analyzePanels[-1]?.explain
+                      }
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                        analyzePanels[-1]?.explain
+                          ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                          : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                      } disabled:opacity-60`}
+                    >
+                      {analyzePanels[-1]?.exBusy
+                        ? "正在生成 3 道练习题…"
+                        : (analyzePanels[-1]?.exercises.length ?? 0) > 0
+                          ? analyzePanels[-1].exOpen
+                            ? "🎯 收起练习"
+                            : "🎯 举一反三练习（已就绪，点击查看）"
                           : "🎯 举一反三练习"}
-                      </button>
-                      {!analyzePanels[-1]?.explain && (
-                        <p className="text-xs text-slate-400">
-                          🔒 请先查看知识点讲解，效果更好
-                        </p>
-                      )}
-                    </div>
-                  )}
+                    </button>
+                    {!analyzePanels[-1]?.explain && (
+                      <p className="text-xs text-slate-400">
+                        🔒 请先查看知识点讲解，效果更好
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {analyzePanels[-1]?.explainError && (
@@ -2451,7 +2484,7 @@ export default function AnalyzeTool({
                     ⚠️ {analyzePanels[-1].exError}
                   </p>
                 )}
-                {analyzePanels[-1] && analyzePanels[-1].exercises.length > 0 && (
+                {analyzePanels[-1] && analyzePanels[-1].exOpen && analyzePanels[-1].exercises.length > 0 && (
                   <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
                     {analyzePanels[-1].exerciseKp && (
                       <div className="rounded-lg bg-indigo-50 px-3 py-1.5 text-center text-sm font-medium text-indigo-700">
@@ -2610,30 +2643,42 @@ export default function AnalyzeTool({
                                 : "📖 更多知识点讲解"
                               : "📖 更多知识点讲解"}
                         </button>
-                        {/* 还没有题目时显示"举一反三练习"；题目生成后这个按钮移到练习区底部。未看讲解前锁定 */}
-                        {aExercises.length === 0 && (
-                          <div className="flex flex-col gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleAnalyzeExercises(i)}
-                              disabled={panel?.exBusy || !panel?.explain}
-                              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                                panel?.explain
-                                  ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
-                                  : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                              } disabled:opacity-60`}
-                            >
-                              {panel?.exBusy
-                                ? "正在生成 3 道练习题…"
+                        {/* 举一反三按钮常驻：未看讲解锁定；有题后点击展开/收起 */}
+                        <div className="flex flex-col gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (aExercises.length > 0) {
+                                setAnalyzePanels((prev) =>
+                                  prev[i]
+                                    ? { ...prev, [i]: { ...prev[i], exOpen: !prev[i].exOpen } }
+                                    : prev
+                                );
+                              } else {
+                                void handleAnalyzeExercises(i);
+                              }
+                            }}
+                            disabled={panel?.exBusy || !panel?.explain}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                              panel?.explain
+                                ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                                : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                            } disabled:opacity-60`}
+                          >
+                            {panel?.exBusy
+                              ? "正在生成 3 道练习题…"
+                              : aExercises.length > 0
+                                ? panel?.exOpen
+                                  ? "🎯 收起练习"
+                                  : "🎯 举一反三练习（已就绪，点击查看）"
                                 : "🎯 举一反三练习"}
-                            </button>
-                            {!panel?.explain && (
-                              <p className="text-xs text-slate-400">
-                                🔒 请先查看知识点讲解，效果更好
-                              </p>
-                            )}
-                          </div>
-                        )}
+                          </button>
+                          {!panel?.explain && (
+                            <p className="text-xs text-slate-400">
+                              🔒 请先查看知识点讲解，效果更好
+                            </p>
+                          )}
+                        </div>
                       </div>
 
                       {panel?.explainError && (
@@ -2655,7 +2700,7 @@ export default function AnalyzeTool({
                       {panel?.exError && (
                         <p className="text-xs text-red-600">⚠️ {panel.exError}</p>
                       )}
-                      {panel && aExercises.length > 0 && (
+                      {panel && panel.exOpen && aExercises.length > 0 && (
                         <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
                           {(panel.exerciseKp || err.knowledge_point) && (
                             <div className="rounded-lg bg-indigo-50 px-3 py-1.5 text-center text-sm font-medium text-indigo-700">
