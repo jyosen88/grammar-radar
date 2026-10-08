@@ -32,18 +32,25 @@ interface EssayResult {
   model_essay?: string;
   errors?: AnalysisError[];
 }
+
+/** analysis_result 可能被存成字符串（列类型 text 而非 jsonb），统一解析 */
+function safeParseAnalysisResult(ar: unknown): Record<string, unknown> {
+  if (typeof ar === "string") {
+    try {
+      return JSON.parse(ar) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return (ar as Record<string, unknown>) ?? {};
+}
+
 interface UserRecord {
   id: number;
   user_id: string;
   image_url: string | null;
   input_text: string;
-  analysis_result: {
-    type?: string;
-    errors?: AnalysisError[];
-    quiz?: QuizSolution;
-    reference_check?: { status?: string; comment?: string };
-    result?: EssayResult;
-  };
+  analysis_result: unknown;
   knowledge_points: string[];
   created_at: string;
 }
@@ -126,17 +133,17 @@ export default function RecordDetailPage({ params }: { params: { id: string } })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
 
-  // ── 提取分析数据 ──
-  const ar = record?.analysis_result;
-  const type = ar?.type ?? "analyze";
+  // ── 提取分析数据（兼容字符串存储） ──
+  const ar = safeParseAnalysisResult(record?.analysis_result);
+  const type = (ar.type as string) ?? "analyze";
   const isEssay = type === "essay";
   const isQuiz = type === "analyze-quiz";
   const errors: AnalysisError[] = isEssay
-    ? ar?.result?.errors ?? []
-    : ar?.errors ?? [];
-  const quiz: QuizSolution | null = isQuiz ? ar?.quiz ?? null : null;
-  const essay: EssayResult | null = isEssay ? ar?.result ?? null : null;
-  const refCheck = !isEssay ? ar?.reference_check ?? null : null;
+    ? ((ar.result as Record<string, unknown>)?.errors as AnalysisError[]) ?? []
+    : (ar.errors as AnalysisError[]) ?? [];
+  const quiz: QuizSolution | null = isQuiz ? (ar.quiz as QuizSolution) ?? null : null;
+  const essay: EssayResult | null = isEssay ? (ar.result as EssayResult) ?? null : null;
+  const refCheck = !isEssay ? (ar.reference_check as { status?: string; comment?: string }) ?? null : null;
 
   return (
     <AuthGuard>

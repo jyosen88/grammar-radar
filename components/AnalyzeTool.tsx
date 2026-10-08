@@ -421,7 +421,10 @@ export default function AnalyzeTool({
         user_id: currentUser.id, // 显式传 user_id，RLS 的 with check 依赖它
         image_url: params.imageUrl ?? null,
         input_text: params.inputText.slice(0, 4000),
-        analysis_result: params.analysisResult,
+        analysis_result:
+          typeof params.analysisResult === "string"
+            ? params.analysisResult // 已经是 JSON 字符串
+            : JSON.parse(JSON.stringify(params.analysisResult)), // 深拷贝去 undefined + 确保 JSON 兼容
         knowledge_points: params.knowledgePoints,
       });
     if (insErr) {

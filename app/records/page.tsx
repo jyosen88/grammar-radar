@@ -7,18 +7,26 @@ import { SiteNav } from "@/components/SiteNav";
 import { AuthGuard } from "@/components/AuthGuard";
 import type { User } from "@supabase/supabase-js";
 
+/** analysis_result 可能被存成字符串（列类型 text 而非 jsonb），统一解析 */
+function safeParseAnalysisResult(ar: unknown): Record<string, unknown> {
+  if (typeof ar === "string") {
+    try {
+      return JSON.parse(ar) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return (ar as Record<string, unknown>) ?? {};
+}
+
 /** user_records 表的一行（列表页只需摘要字段） */
 interface UserRecord {
   id: number;
   user_id: string;
   image_url: string | null;
   input_text: string;
-  analysis_result: {
-    type?: string;
-    errors?: unknown[];
-    quiz?: { answer_letter?: string; knowledge_point?: string };
-    result?: { errors?: unknown[] };
-  };
+  // analysis_result 列可能是 text（存成 JSON 字符串）也可能是 jsonb（存成对象）
+  analysis_result: unknown;
   knowledge_points: string[];
   created_at: string;
 }
@@ -29,28 +37,31 @@ function formatTime(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 从 analysis_result 里提取错误数量，兼容 analyze / essay 两种存储结构 */
-function getErrorCount(ar: UserRecord["analysis_result"]): number {
+/** 从 analysis_result 里提取错误数量，兼容 analyze / essay 两种存储结构，兼容字符串 */
+function getErrorCount(rawAr: unknown): number {
+  const ar = safeParseAnalysisResult(rawAr);
   if (Array.isArray(ar?.errors)) return ar.errors.length;
-  if (Array.isArray(ar?.result?.errors)) return ar.result.errors.length;
+  const result = ar?.result as Record<string, unknown> | undefined;
+  if (result && Array.isArray(result.errors)) return result.errors.length;
   return 0;
 }
 
 /** 提取前几个知识点标签用于列表摘要展示 */
-function getKnowledgeTags(ar: UserRecord["analysis_result"], kps: string[]): string[] {
-  // 优先用 knowledge_points 字段
+function getKnowledgeTags(rawAr: unknown, kps: string[]): string[] {
   if (kps.length > 0) return [...new Set(kps)].slice(0, 3);
-  // 兜底：从 analysis_result 里找
+  const ar = safeParseAnalysisResult(rawAr);
   const tags: string[] = [];
-  if (ar?.quiz?.knowledge_point) tags.push(ar.quiz.knowledge_point);
+  const quiz = ar?.quiz as Record<string, unknown> | undefined;
+  if (quiz?.knowledge_point) tags.push(quiz.knowledge_point as string);
   if (Array.isArray(ar?.errors)) {
     for (const e of ar.errors) {
       const kp = (e as { knowledge_point?: string })?.knowledge_point;
       if (kp && tags.length < 3) tags.push(kp);
     }
   }
-  if (Array.isArray(ar?.result?.errors)) {
-    for (const e of ar.result.errors) {
+  const result = ar?.result as Record<string, unknown> | undefined;
+  if (result && Array.isArray(result.errors)) {
+    for (const e of result.errors) {
       const kp = (e as { knowledge_point?: string })?.knowledge_point;
       if (kp && tags.length < 3) tags.push(kp);
     }
@@ -148,7 +159,7 @@ export default function RecordsPage() {
           ) : (
             <ul className="space-y-3">
               {records.map((r) => {
-                const type = r.analysis_result?.type ?? "analyze";
+                const type = safeParseAnalysisResult(r.analysis_result).type as string ?? "analyze";
                 const isEssay = type === "essay";
                 const isQuiz = type === "analyze-quiz";
                 const errCount = getErrorCount(r.analysis_result);
