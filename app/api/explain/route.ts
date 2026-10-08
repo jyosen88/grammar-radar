@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
+import { normalizeKnowledgePointKey } from "@/lib/knowledge-points";
 
 const SYSTEM_PROMPT = `你是一名经验丰富的中学英语老师。学生正在学习一道英语题，现在想深入了解这道题涉及的核心知识点。请你输出一份结构完整的"微讲义"，像一页微型教材一样，让学生读完就能彻底掌握这个知识点。不允许说"请参考资料"之类的话。
 
@@ -31,10 +32,9 @@ const SYSTEM_PROMPT = `你是一名经验丰富的中学英语老师。学生正
 - 【不超纲】整篇讲义只讲标签中的这一条规则，禁止顺带展开标签以外的其他规则（如标签是"泛指抽象概念不加冠词"，就不要再讲"独一无二的事物加 the"）；如确有必要提示一条关联规则，只能在"五、记忆口诀"末尾用一句话带过并以【延伸】开头
 - 对比表格必须是合法的 Markdown 表格语法（含 | --- | 分隔行）`;
 
-/** 规范化缓存键：去首尾空白，避免同一知识点因空格差异重复缓存 */
-function normalizeKey(kp: string): string {
-  return kp.trim().replace(/\s+/g, " ").slice(0, 200);
-}
+/** 规范化缓存键：去掉"（待补充）"标记、去首尾空白、压缩空格。
+ *  待补充标签回落到其基础标签，复用基础标签的讲义缓存，避免重复生成。 */
+const normalizeKey = normalizeKnowledgePointKey;
 
 /** 读缓存：同一知识点已生成过讲义则直接返回；任何失败都静默降级（当作未命中） */
 async function readCachedLesson(key: string): Promise<string | null> {
@@ -110,16 +110,18 @@ export async function POST(req: NextRequest) {
   }
 
   // 2) 缓存未命中，调 DeepSeek 生成微讲义
+  // 待补充标签按基础标签生成讲义（与缓存键一致）
+  const kpBase = normalizeKey(knowledgePoint);
   let userContent: string;
   if (context.trim()) {
     // 无错误句子 / 选择题：结合完整题目上下文讲解核心考点
     userContent = `【题目上下文】${context.slice(0, 800)}
-【本题核心知识点】${knowledgePoint.slice(0, 200) || "请根据上下文自行提炼"}
+【本题核心知识点】${kpBase || "请根据上下文自行提炼"}
 
 请结合这道题讲一份关于核心知识点的微讲义，例句可以涉及类似场景，但不要照抄题目原句。`;
   } else {
     // 传统错误讲解：结合具体错误片段
-    userContent = `【要讲解的细化知识点】${knowledgePoint.slice(0, 200)}
+    userContent = `【要讲解的细化知识点】${kpBase}
 【学生刚才做错的片段】${original.slice(0, 300)}
 【正确写法】${corrected.slice(0, 300)}
 【该错误的原因与修改建议】${reason.slice(0, 500)}

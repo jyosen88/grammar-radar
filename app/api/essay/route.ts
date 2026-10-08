@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeExercises, parseLooseJson, type Exercise } from "@/lib/exercise";
+import { KNOWLEDGE_POINT_SECTION } from "@/lib/knowledge-points";
 
 /** 各写作类型的评分维度与难度基准 */
 function buildScopeGuide(scope: string): string {
@@ -63,36 +64,7 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
 7.【参考范文】：按写作类型的要求重写一篇高质量范文。
 
 每处错误必须做到四件事：
-① 给出细化到二级/三级的知识点名称（knowledge_point），格式为"大类 - 小类"，必要时"大类 - 小类 - 特殊情形"。严禁只给大类。参照下表细化（表外的知识点也按同样粒度命名）：
-- 主谓一致 - 语法一致
-- 主谓一致 - 意义一致（集合名词 family/audience/team 等按语义决定单复数）
-- 主谓一致 - 就近一致（either...or / neither...nor / not only...but also / there be）
-- 主谓一致 - 不定代词作主语（each/every/someone/nobody 等）
-- 主谓一致 - 分数/百分数作主语
-- 主谓一致 - the number of vs a number of
-- 主谓一致 - 主语后接 with/together with/as well as
-- 非谓语动词 - 动名词作宾语（enjoy/finish/mind/practice + doing）
-- 非谓语动词 - 不定式作宾语（want/decide/hope + to do）
-- 非谓语动词 - 使役/感官动词（make/let/have/see/hear + do/doing）
-- 非谓语动词 - 分词作定语/状语
-- 名词 - 可数与不可数
-- 名词 - 名词作定语的单复数（man/woman 变复数）
-- 名词 - 所有格（'s 与 of）
-- 名词 - 恒复数名词（police/cattle/people）
-- 冠词 - 不定冠词 a/an
-- 冠词 - 定冠词 the（乐器/序数词/特指）
-- 冠词 - 零冠词（三餐/球类/学科）
-- 代词 - 人称代词主格宾格
-- 代词 - 物主代词/反身代词
-- 代词 - 指示代词/不定代词
-- 时态 - 一般现在时 / 现在进行时 / 一般过去时 / 现在完成时 / 过去进行时 / 过去完成时 / 一般将来时
-- 被动语态
-- 介词 - 固定搭配（listen to / interested in 等）
-- 形容词与副词 - 比较级/最高级、系动词后接形容词
-- 从句 - 定语从句（who/which/that/whose/关系副词）
-- 从句 - 宾语从句（语序/引导词）
-- 从句 - 状语从句（时间/条件/让步）
-- 连词与逻辑衔接 / 词性混用 / 拼写
+① 给出知识点名称（knowledge_point），必须严格遵守文末【标准知识点标签清单】一节的选择规则，从清单中逐字选取，禁止发明新标签。
 
 ② 三段讲解，各司其职、内容不重复：
 - reason（错误原因）：明确指出错在哪里，说明学生为什么容易犯这个错；
@@ -149,7 +121,9 @@ const SYSTEM_PROMPT = `你是一名专业的中学英语作文批改老师。用
 7. highlights 每条必须真实出自作文原文，并标注具体水平；没有亮点时返回 []
 8. improvements 给 3-5 条，必须具体可操作（指出位置 + 给出改法），禁止"注意衔接""多使用高级句型"这类空话；如缺过渡词，必须指出具体在哪两句/两段之间加哪个英文过渡词
 9. model_essay 必须符合写作类型的词汇/句式难度，不要为了炫技超纲
-10. 全部说明文字用中文，original/corrected/text/题目/选项/答案/suggestion 中的英文/model_essay 保持英文`;
+10. 全部说明文字用中文，original/corrected/text/题目/选项/答案/suggestion 中的英文/model_essay 保持英文
+
+${KNOWLEDGE_POINT_SECTION}`;
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
