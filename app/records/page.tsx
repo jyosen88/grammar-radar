@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { getSupabase, getStoredSession } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
 import { AuthGuard } from "@/components/AuthGuard";
 import type { User } from "@supabase/supabase-js";
 
-/** user_records 表的一行 */
+/** user_records 表的一行（列表页只需摘要字段） */
 interface UserRecord {
   id: number;
   user_id: string;
@@ -14,39 +15,9 @@ interface UserRecord {
   input_text: string;
   analysis_result: {
     type?: string;
-    errors?: {
-      original: string;
-      corrected: string;
-      knowledge_point?: string;
-      reason?: string;
-      suggestion?: string;
-    }[];
-    quiz?: {
-      answer_letter: string;
-      answer_text: string;
-      knowledge_point?: string;
-      explanation?: string;
-      options?: {
-        letter: string;
-        text: string;
-        is_correct?: boolean;
-        analysis?: string;
-      }[];
-    };
-    reference_check?: {
-      status?: string;
-      comment?: string;
-    };
-    result?: {
-      on_topic?: { is_on_topic?: boolean; comment?: string };
-      scores?: { name: string; level: string; comment: string }[];
-      model_essay?: string;
-      errors?: {
-        original: string;
-        corrected: string;
-        knowledge_point?: string;
-      }[];
-    };
+    errors?: unknown[];
+    quiz?: { answer_letter?: string; knowledge_point?: string };
+    result?: { errors?: unknown[] };
   };
   knowledge_points: string[];
   created_at: string;
@@ -58,13 +29,40 @@ function formatTime(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 从 analysis_result 里提取错误数量，兼容 analyze / essay 两种存储结构 */
+function getErrorCount(ar: UserRecord["analysis_result"]): number {
+  if (Array.isArray(ar?.errors)) return ar.errors.length;
+  if (Array.isArray(ar?.result?.errors)) return ar.result.errors.length;
+  return 0;
+}
+
+/** 提取前几个知识点标签用于列表摘要展示 */
+function getKnowledgeTags(ar: UserRecord["analysis_result"], kps: string[]): string[] {
+  // 优先用 knowledge_points 字段
+  if (kps.length > 0) return [...new Set(kps)].slice(0, 3);
+  // 兜底：从 analysis_result 里找
+  const tags: string[] = [];
+  if (ar?.quiz?.knowledge_point) tags.push(ar.quiz.knowledge_point);
+  if (Array.isArray(ar?.errors)) {
+    for (const e of ar.errors) {
+      const kp = (e as { knowledge_point?: string })?.knowledge_point;
+      if (kp && tags.length < 3) tags.push(kp);
+    }
+  }
+  if (Array.isArray(ar?.result?.errors)) {
+    for (const e of ar.result.errors) {
+      const kp = (e as { knowledge_point?: string })?.knowledge_point;
+      if (kp && tags.length < 3) tags.push(kp);
+    }
+  }
+  return [...new Set(tags)].slice(0, 3);
+}
+
 export default function RecordsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [records, setRecords] = useState<UserRecord[]>([]);
   const [error, setError] = useState("");
-  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
-  // 已加载过记录的用户 ID，避免缓存快照/getSession/登录事件对同一用户重复查询
   const loadedForRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -84,17 +82,13 @@ export default function RecordsPage() {
       }
     };
 
-    // 本地缓存会话即时加载（零网络），弱网下不等 getSession 刷新
     const cached = getStoredSession();
     if (cached?.user?.id) {
-      applyUser(
-        { id: cached.user.id, email: cached.user.email ?? null } as User
-      );
+      applyUser({ id: cached.user.id, email: cached.user.email ?? null } as User);
     } else {
       setLoading(false);
     }
 
-    // 网络对账（能拿到会话时保持一致；无缓存会话时守卫本就会跳走）
     sb.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) applyUser(session.user);
     });
@@ -123,56 +117,49 @@ export default function RecordsPage() {
 
   return (
     <AuthGuard>
-    <div className="min-h-screen bg-[#f8f5fe]">
-      <SiteNav />
-      <main className="mx-auto max-w-3xl space-y-5 px-4 py-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">我的记录</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            你的历史分析记录：输入内容、图片、分析结果和知识点汇总
-          </p>
-        </div>
+      <div className="min-h-screen bg-[#f8f5fe]">
+        <SiteNav />
+        <main className="mx-auto max-w-3xl space-y-5 px-4 py-8">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">我的记录</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              点击任意记录查看完整的分析详情
+            </p>
+          </div>
 
-        {loading ? (
-          <p className="py-10 text-center text-sm text-slate-400">加载中…</p>
-        ) : !user ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-            <p className="text-sm text-slate-600">
-              请先点击右上角「登录 / 注册」，登录后即可查看你的历史分析记录。
+          {loading ? (
+            <p className="py-10 text-center text-sm text-slate-400">加载中…</p>
+          ) : !user ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+              <p className="text-sm text-slate-600">
+                请先登录后查看记录。
+              </p>
+            </div>
+          ) : error ? (
+            <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+              ⚠️ {error}
             </p>
-          </div>
-        ) : error ? (
-          <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
-            ⚠️ {error}
-          </p>
-        ) : records.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-            <p className="text-sm text-slate-500">
-              还没有记录。回到首页做一次分析，结果会自动保存到这里。
-            </p>
-          </div>
-        ) : (
-          <ul className="space-y-4">
-            {records.map((r) => {
-              const isEssay = r.analysis_result?.type === "essay";
-              const isQuiz = r.analysis_result?.type === "analyze-quiz";
-              const quiz = isQuiz ? r.analysis_result?.quiz ?? null : null;
-              const refCheck =
-                !isEssay && r.analysis_result?.reference_check
-                  ? r.analysis_result.reference_check
-                  : null;
-              const errors =
-                r.analysis_result?.errors ??
-                r.analysis_result?.result?.errors ??
-                [];
-              const isOpen = expanded[r.id] ?? false;
-              return (
-                <li
-                  key={r.id}
-                  className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
+          ) : records.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+              <p className="text-sm text-slate-500">
+                还没有记录。回到首页做一次分析，结果会自动保存到这里。
+              </p>
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {records.map((r) => {
+                const type = r.analysis_result?.type ?? "analyze";
+                const isEssay = type === "essay";
+                const isQuiz = type === "analyze-quiz";
+                const errCount = getErrorCount(r.analysis_result);
+                const tags = getKnowledgeTags(r.analysis_result, r.knowledge_points);
+                return (
+                  <li key={r.id}>
+                    <Link
+                      href={`/records/${r.id}`}
+                      className="block space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-violet-300 hover:shadow-md"
+                    >
+                      {/* 第一行：类型徽章 + 时间 */}
                       <div className="flex flex-wrap items-center gap-2">
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -183,158 +170,75 @@ export default function RecordsPage() {
                                 : "bg-indigo-100 text-indigo-700"
                           }`}
                         >
-                          {isEssay
-                            ? "作文分析"
-                            : isQuiz
-                              ? "选择题解析"
-                              : "单题分析"}
+                          {isEssay ? "作文分析" : isQuiz ? "选择题解析" : "单题分析"}
                         </span>
                         <span className="text-xs text-slate-400">
                           {formatTime(r.created_at)}
                         </span>
+                        {/* 错误数量 */}
+                        {!isQuiz && (
+                          <span
+                            className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${
+                              errCount === 0
+                                ? "bg-emerald-50 text-emerald-600"
+                                : "bg-red-50 text-red-600"
+                            }`}
+                          >
+                            {errCount} 处错误
+                          </span>
+                        )}
+                        {isQuiz && (
+                          <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600">
+                            选择题
+                          </span>
+                        )}
                       </div>
-                      <p className="mt-2 line-clamp-3 text-sm whitespace-pre-line text-slate-700">
+
+                      {/* 第二行：内容摘要 */}
+                      <p className="line-clamp-2 text-sm whitespace-pre-line text-slate-600">
                         {r.input_text}
                       </p>
-                    </div>
-                    {r.image_url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={r.image_url}
-                        alt="上传的图片"
-                        className="h-16 w-16 shrink-0 rounded-lg border border-slate-200 object-cover"
-                      />
-                    )}
-                  </div>
 
-                  {r.knowledge_points.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {[...new Set(r.knowledge_points)].map((kp) => (
-                        <span
-                          key={kp}
-                          className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700"
-                        >
-                          📌 {kp}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {refCheck && (
-                    <p
-                      title={refCheck.comment}
-                      className={`text-xs ${
-                        refCheck.status === "difference"
-                          ? "text-amber-700"
-                          : refCheck.status === "consistent"
-                            ? "text-emerald-700"
-                            : "text-slate-400"
-                      }`}
-                    >
-                      {refCheck.status === "difference"
-                        ? `⚠️ AI 分析与外部参考存在差异${refCheck.comment ? `：${refCheck.comment}` : ""}`
-                        : refCheck.status === "consistent"
-                          ? "✅ 已与外部参考对照，结论一致"
-                          : "🔍 纯 AI 分析（无外部参考）"}
-                    </p>
-                  )}
-
-                  <div className="flex items-center gap-3">
-                    {quiz ? (
-                      <p className="text-xs text-emerald-700">
-                        ✅ 正确答案：{quiz.answer_letter}
-                        {quiz.answer_text ? `. ${quiz.answer_text}` : ""}
-                      </p>
-                    ) : (
-                      <p className="text-xs text-slate-400">
-                        共 {errors.length} 处错误
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpanded((m) => ({ ...m, [r.id]: !isOpen }))
-                      }
-                      className="text-xs font-medium text-indigo-600 hover:underline"
-                    >
-                      {isOpen ? "收起 ▲" : "查看分析详情 ▼"}
-                    </button>
-                  </div>
-
-                  {isOpen && quiz && (
-                    <div className="space-y-2 border-t border-slate-100 pt-3">
-                      {quiz.knowledge_point && (
-                        <p className="text-xs text-violet-600">
-                          📌 考点：{quiz.knowledge_point}
-                        </p>
-                      )}
-                      {quiz.explanation && (
-                        <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm leading-6 whitespace-pre-line text-slate-700">
-                          {quiz.explanation}
-                        </p>
-                      )}
-                      {quiz.options && quiz.options.length > 0 && (
-                        <ul className="space-y-1.5">
-                          {quiz.options.map((o) => (
-                            <li
-                              key={o.letter}
-                              className={`rounded-lg px-3 py-1.5 text-xs ${
-                                o.is_correct
-                                  ? "bg-emerald-50 text-emerald-800"
-                                  : "bg-slate-50 text-slate-600"
-                              }`}
+                      {/* 第三行：知识点标签 */}
+                      {tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {tags.map((kp) => (
+                            <span
+                              key={kp}
+                              className="rounded-full bg-violet-100 px-2 py-0.5 text-xs text-violet-700"
                             >
-                              <span className="font-semibold">
-                                {o.is_correct ? "✓" : "✗"} {o.letter}. {o.text}
-                              </span>
-                              {o.analysis && (
-                                <span className="mt-0.5 block whitespace-pre-line leading-5 text-slate-500">
-                                  {o.analysis}
-                                </span>
-                              )}
-                            </li>
+                              📌 {kp}
+                            </span>
                           ))}
-                        </ul>
+                          {/* 缩略图 */}
+                          {r.image_url && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={r.image_url}
+                              alt="图片"
+                              className="ml-auto h-8 w-8 rounded border border-slate-200 object-cover"
+                            />
+                          )}
+                        </div>
                       )}
-                    </div>
-                  )}
 
-                  {isOpen && !quiz && (
-                    <ul className="space-y-2 border-t border-slate-100 pt-3">
-                      {errors.length === 0 ? (
-                        <li className="text-sm text-emerald-700">
-                          ✅ 未发现明显语法错误
-                        </li>
-                      ) : (
-                        errors.map((e, i) => (
-                          <li
-                            key={i}
-                            className="rounded-lg bg-slate-50 px-3 py-2 text-sm"
-                          >
-                            <span className="text-red-600 line-through">
-                              {e.original}
-                            </span>
-                            <span className="mx-1.5 text-slate-400">→</span>
-                            <span className="font-medium text-emerald-700">
-                              {e.corrected}
-                            </span>
-                            {e.knowledge_point && (
-                              <span className="ml-2 text-xs text-violet-600">
-                                {e.knowledge_point}
-                              </span>
-                            )}
-                          </li>
-                        ))
+                      {/* 如果没有知识点但有图片，单独显示缩略图 */}
+                      {tags.length === 0 && r.image_url && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={r.image_url}
+                          alt="图片"
+                          className="h-8 w-8 rounded border border-slate-200 object-cover"
+                        />
                       )}
-                    </ul>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </main>
-    </div>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </main>
+      </div>
     </AuthGuard>
   );
 }
