@@ -317,6 +317,9 @@ export default function AnalyzeTool({
     useState<ReferenceCheck | null>(null);
   // 外部参考对照横幅详情默认收起，点击标题展开
   const [refBannerOpen, setRefBannerOpen] = useState(false);
+  // 手机端结果分页（< md）：1 错误诊断 / 2 知识点讲解 / 3 举一反三练习；电脑端 md 以上不分页
+  const [mobilePage, setMobilePage] = useState(1);
+  const pagerTopRef = useRef<HTMLDivElement>(null);
   // 吉祥物"小雷达"情绪：答对笑、答错思考，几秒后回到平静
   const [mascotMood, setMascotMood] = useState<MascotMood>("idle");
   const [mascotTick, setMascotTick] = useState(0);
@@ -328,6 +331,24 @@ export default function AnalyzeTool({
 
   // 分析模式状态
   const [mode, setMode] = useState<"analyze" | "essay" | null>(null);
+  // 手机端分页：新一次分析结果到达时回到第 1 页
+  useEffect(() => {
+    setMobilePage(1);
+  }, [quizSolution, analysisErrors]);
+  // 是否展示手机端分页条（单题分析有结果且不在加载中；电脑端靠 md:hidden 自动隐藏）
+  const showMobilePager =
+    mode === "analyze" && !busy && (!!quizSolution || !!analysisErrors);
+  const MOBILE_PAGE_TITLES = ["错误诊断", "知识点讲解", "举一反三练习"];
+  /** 手机端分页可见性：非当前页在 < md 隐藏，md 以上始终展示，电脑端布局零变化 */
+  const mp = (page: number) =>
+    mobilePage === page ? "" : "hidden md:block";
+  const goMobilePage = (page: number) => {
+    setMobilePage(page);
+    // 切换后把结果区顶部滚回视口
+    requestAnimationFrame(() =>
+      pagerTopRef.current?.scrollIntoView({ behavior: "auto", block: "start" })
+    );
+  };
   // 作文分析（两步流程）：①题目要求 ②作文
   const [topicText, setTopicText] = useState("");
   const [essayScope, setEssayScope] = useState(""); // 写作类型，空 = 默认中考标准
@@ -2188,10 +2209,40 @@ export default function AnalyzeTool({
           </div>
         )}
 
+        {/* 手机端分页进度条（< md 显示，电脑端隐藏，桌面始终整页展示） */}
+        {showMobilePager && (
+          <div
+            ref={pagerTopRef}
+            className="sticky top-0 z-20 rounded-2xl border border-violet-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur md:hidden"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-violet-700">
+                {mobilePage}. {MOBILE_PAGE_TITLES[mobilePage - 1]}
+              </span>
+              <span className="text-xs font-medium text-slate-400">
+                {mobilePage} / 3
+              </span>
+            </div>
+            <div className="mt-2 flex gap-1.5">
+              {[1, 2, 3].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => goMobilePage(p)}
+                  aria-label={`第 ${p} 页：${MOBILE_PAGE_TITLES[p - 1]}`}
+                  className={`h-1.5 flex-1 rounded-full transition ${
+                    p === mobilePage ? "bg-violet-500" : "bg-violet-100"
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 选择题解题模式：正确答案 + 考点 + 逐项分析 */}
         {quizSolution && !busy && (
           <div className="space-y-4 rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className={`flex flex-wrap items-center gap-2 ${mobilePage === 1 ? "" : "hidden md:flex"}`}>
               <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
                 📝 选择题 · AI 解题
               </span>
@@ -2203,7 +2254,7 @@ export default function AnalyzeTool({
             </div>
 
             {/* 正确答案 */}
-            <div className="rounded-xl bg-emerald-50 px-4 py-3">
+            <div className={`rounded-xl bg-emerald-50 px-4 py-3 ${mp(1)}`}>
               <p className="text-xs font-semibold text-emerald-600">
                 正确答案
               </p>
@@ -2214,7 +2265,7 @@ export default function AnalyzeTool({
 
             {/* 题目解析 */}
             {quizSolution.explanation && (
-              <div className="rounded-md bg-slate-50 px-3 py-2">
+              <div className={`rounded-md bg-slate-50 px-3 py-2 ${mp(1)}`}>
                 <p className="text-xs font-semibold text-slate-400">
                   题目解析
                 </p>
@@ -2225,12 +2276,18 @@ export default function AnalyzeTool({
             )}
 
             {/* 选择题模式下也提供知识点讲解与举一反三练习 */}
-            <div className="flex flex-wrap gap-2 pt-2">
+            <div
+              className={`flex flex-wrap gap-2 pt-2 ${
+                mobilePage === 1 ? "hidden md:flex" : ""
+              }`}
+            >
               <button
                 type="button"
                 onClick={handleGeneralExplain}
                 disabled={analyzePanels[-1]?.explainBusy}
-                className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
+                className={`rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60 ${
+                  mobilePage === 2 ? "" : "hidden md:inline-block"
+                }`}
               >
                 {analyzePanels[-1]?.explainBusy
                   ? "正在生成讲解…"
@@ -2240,7 +2297,11 @@ export default function AnalyzeTool({
                       : "📖 更多知识点讲解"
                     : "📖 更多知识点讲解"}
               </button>
-              <div className="flex flex-col gap-1">
+              <div
+                className={`flex flex-col gap-1 ${
+                  mobilePage === 3 ? "" : "hidden md:flex"
+                }`}
+              >
                 <button
                   type="button"
                   onClick={() => {
@@ -2281,10 +2342,11 @@ export default function AnalyzeTool({
             </div>
 
             {analyzePanels[-1]?.explainError && (
-              <p className="text-xs text-red-600">
+              <p className={`text-xs text-red-600 ${mp(2)}`}>
                 ⚠️ {analyzePanels[-1].explainError}
               </p>
             )}
+            <div className={mp(2)}>
             {analyzePanels[-1]?.explainOpen &&
               (analyzePanels[-1].explainBusy ? (
                 <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-600">
@@ -2295,14 +2357,15 @@ export default function AnalyzeTool({
                   <KnowledgeExplainView explain={analyzePanels[-1].explain!} />
                 )
               ))}
+            </div>
 
             {analyzePanels[-1]?.exError && (
-              <p className="text-xs text-red-600">
+              <p className={`text-xs text-red-600 ${mp(3)}`}>
                 ⚠️ {analyzePanels[-1].exError}
               </p>
             )}
             {analyzePanels[-1] && analyzePanels[-1].exOpen && analyzePanels[-1].exercises.length > 0 && (
-              <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+              <div className={`space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3 ${mp(3)}`}>
                 {analyzePanels[-1].exerciseKp && (
                   <div className="rounded-lg bg-indigo-50 px-3 py-1.5 text-center text-sm font-medium text-indigo-700">
                     📚 本题考查：{analyzePanels[-1].exerciseKp}
@@ -2384,17 +2447,23 @@ export default function AnalyzeTool({
           <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             {analysisErrors.length === 0 ? (
               <>
-                <p className="py-2 text-center text-sm text-emerald-700">
+                <p className={`py-2 text-center text-sm text-emerald-700 ${mp(1)}`}>
                   ✅ 未发现明显语法错误
                 </p>
 
                 {/* 无错误时也提供知识点讲解与举一反三练习 */}
-                <div className="flex flex-wrap gap-2 pt-0.5">
+                <div
+                  className={`flex flex-wrap gap-2 pt-0.5 ${
+                    mobilePage === 1 ? "hidden md:flex" : ""
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={handleGeneralExplain}
                     disabled={analyzePanels[-1]?.explainBusy}
-                    className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
+                    className={`rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60 ${
+                      mobilePage === 2 ? "" : "hidden md:inline-block"
+                    }`}
                   >
                     {analyzePanels[-1]?.explainBusy
                       ? "正在生成讲解…"
@@ -2404,7 +2473,11 @@ export default function AnalyzeTool({
                           : "📖 这道题考什么？点这里深入了解"
                         : "📖 这道题考什么？点这里深入了解"}
                   </button>
-                  <div className="flex flex-col gap-1">
+                  <div
+                    className={`flex flex-col gap-1 ${
+                      mobilePage === 3 ? "" : "hidden md:flex"
+                    }`}
+                  >
                     <button
                       type="button"
                       onClick={() => {
@@ -2544,7 +2617,7 @@ export default function AnalyzeTool({
               </>
             ) : (
               <>
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className={`text-sm font-semibold text-slate-900 ${mp(1)}`}>
                   AI 分析结果（{analysisErrors.length} 处错误）
                 </h3>
                 <ul className="space-y-4">
@@ -2563,7 +2636,7 @@ export default function AnalyzeTool({
                       key={i}
                       className="space-y-2 border-l-4 border-amber-300 pl-3"
                     >
-                      <p className="text-sm">
+                      <p className={`text-sm ${mp(1)}`}>
                         <span className="text-red-600 line-through">
                           {err.original}
                         </span>
@@ -2573,7 +2646,7 @@ export default function AnalyzeTool({
                         </span>
                       </p>
                       {reason && (
-                        <div className="rounded-md bg-slate-50 px-3 py-2">
+                        <div className={`rounded-md bg-slate-50 px-3 py-2 ${mp(1)}`}>
                           <p className="text-xs font-semibold text-slate-400">
                             错误原因
                           </p>
@@ -2583,7 +2656,7 @@ export default function AnalyzeTool({
                         </div>
                       )}
                       {contextNote && (
-                        <div className="rounded-md bg-amber-50 px-3 py-2">
+                        <div className={`rounded-md bg-amber-50 px-3 py-2 ${mp(1)}`}>
                           <p className="text-xs font-semibold text-amber-500">
                             语境 / 搭配解释
                           </p>
@@ -2593,7 +2666,7 @@ export default function AnalyzeTool({
                         </div>
                       )}
                       {suggestion && (
-                        <div className="rounded-md bg-emerald-50 px-3 py-2">
+                        <div className={`rounded-md bg-emerald-50 px-3 py-2 ${mp(1)}`}>
                           <p className="text-xs font-semibold text-emerald-600">
                             修改建议
                           </p>
@@ -2603,18 +2676,24 @@ export default function AnalyzeTool({
                         </div>
                       )}
                       {err.knowledge_point && (
-                        <span className="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700">
+                        <span className={`inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700 ${mobilePage === 1 ? "" : "hidden md:inline-flex"}`}>
                           📌 {err.knowledge_point}
                         </span>
                       )}
 
                       {/* 讲解 / 练习 两个按钮并排同一行 */}
-                      <div className="flex flex-wrap gap-2 pt-0.5">
+                      <div
+                        className={`flex flex-wrap gap-2 pt-0.5 ${
+                          mobilePage === 1 ? "hidden md:flex" : ""
+                        }`}
+                      >
                         <button
                           type="button"
                           onClick={() => handleExplainKnowledge(i)}
                           disabled={panel?.explainBusy}
-                          className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
+                          className={`rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60 ${
+                            mobilePage === 2 ? "" : "hidden md:inline-block"
+                          }`}
                         >
                           {panel?.explainBusy
                             ? "正在生成讲解…"
@@ -2625,7 +2704,11 @@ export default function AnalyzeTool({
                               : "📖 更多知识点讲解"}
                         </button>
                         {/* 举一反三按钮常驻：未看讲解锁定；有题后点击展开/收起 */}
-                        <div className="flex flex-col gap-1">
+                        <div
+                          className={`flex flex-col gap-1 ${
+                            mobilePage === 3 ? "" : "hidden md:flex"
+                          }`}
+                        >
                           <button
                             type="button"
                             onClick={() => {
@@ -2663,10 +2746,11 @@ export default function AnalyzeTool({
                       </div>
 
                       {panel?.explainError && (
-                        <p className="text-xs text-red-600">
+                        <p className={`text-xs text-red-600 ${mp(2)}`}>
                           ⚠️ {panel.explainError}
                         </p>
                       )}
+                      <div className={mp(2)}>
                       {panel?.explainOpen &&
                         (panel.explainBusy ? (
                           <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-600">
@@ -2677,12 +2761,13 @@ export default function AnalyzeTool({
                             <KnowledgeExplainView explain={panel.explain} />
                           )
                         ))}
+                      </div>
 
                       {panel?.exError && (
-                        <p className="text-xs text-red-600">⚠️ {panel.exError}</p>
+                        <p className={`text-xs text-red-600 ${mp(3)}`}>⚠️ {panel.exError}</p>
                       )}
                       {panel && panel.exOpen && aExercises.length > 0 && (
-                        <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+                        <div className={`space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3 ${mp(3)}`}>
                           {(panel.exerciseKp || err.knowledge_point) && (
                             <div className="rounded-lg bg-indigo-50 px-3 py-1.5 text-center text-sm font-medium text-indigo-700">
                               📚 本题考查：{panel.exerciseKp || err.knowledge_point}
@@ -2830,6 +2915,52 @@ export default function AnalyzeTool({
               </button>
             </div>
           </div>
+        )}
+
+        {/* 手机端底部分页栏（< md 固定贴底，电脑端隐藏；桌面布局保持一次性完整展示） */}
+        {showMobilePager && (
+          <>
+            {/* 占位：防止固定底栏遮挡追问区最后一行 */}
+            <div className="h-24 md:hidden" aria-hidden="true" />
+            <div
+              className="fixed inset-x-0 bottom-0 z-50 border-t border-violet-200 bg-white/95 px-4 pt-2.5 shadow-[0_-2px_12px_rgba(124,58,237,0.10)] backdrop-blur md:hidden"
+              style={{
+                paddingBottom: "calc(0.625rem + env(safe-area-inset-bottom))",
+              }}
+            >
+              <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => goMobilePage(mobilePage - 1)}
+                  disabled={mobilePage === 1}
+                  className="rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-medium text-violet-700 transition active:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ← 上一页
+                </button>
+                <div className="flex items-center gap-1.5">
+                  {[1, 2, 3].map((p) => (
+                    <span
+                      key={p}
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        p === mobilePage ? "bg-violet-500" : "bg-violet-200"
+                      }`}
+                    />
+                  ))}
+                  <span className="ml-1 text-xs font-medium text-slate-400">
+                    {mobilePage} / 3
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => goMobilePage(mobilePage + 1)}
+                  disabled={mobilePage === 3}
+                  className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition active:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  下一页 →
+                </button>
+              </div>
+            </div>
+          </>
         )}
 
         {mode === null && !analysisError && !busy && (
