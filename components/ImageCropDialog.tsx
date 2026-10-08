@@ -1,35 +1,82 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Cropper, { type Area, type Point } from "react-easy-crop";
-import { getCroppedImageBlob, type CropArea } from "@/lib/image-crop";
+import { useCallback, useRef, useState } from "react";
+import ReactCrop, {
+  type Crop,
+  type PixelCrop,
+  centerCrop,
+  makeAspectCrop,
+} from "react-image-crop";
+import "react-image-crop/dist/ReactCrop.css";
+import { getCroppedImageBlob } from "@/lib/image-crop";
 
-/** 裁剪对话框：在选图后弹出，支持拖拽/缩放选择矩形区域 */
+/** 裁剪对话框：图片固定显示，用户拖动裁剪框（可拉八向手柄）选择要保留的矩形区域 */
 export default function ImageCropDialog({
   imageSrc,
   fileName,
   onConfirm,
   onCancel,
 }: {
-  imageSrc: string; // object URL 或 data URL
+  imageSrc: string; // object URL
   fileName: string;
   onConfirm: (blob: Blob, fileName: string) => void;
   onCancel: () => void;
 }) {
-  const [crop, setCrop] = useState<Point>({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [croppedArea, setCroppedArea] = useState<CropArea | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const [crop, setCrop] = useState<Crop>();
+  const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const onCropComplete = useCallback((_: Area, croppedAreaPixels: Area) => {
-    setCroppedArea(croppedAreaPixels);
-  }, []);
+  /** 图片加载后，默认裁剪框尽量贴合整张图片（四周留 5% 边距，方便微调） */
+  const onImageLoad = useCallback(
+    (e: React.SyntheticEvent<HTMLImageElement>) => {
+      const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+      // 默认框 = 居中、占图片 90% 宽高
+      const c = centerCrop(makeAspectCrop({ unit: "%", width: 90 }, w / h, w, h), w, h);
+      setCrop(c);
+    },
+    []
+  );
 
   async function handleConfirm() {
-    if (!croppedArea) return;
+    // 用户没拖动时 completedCrop 可能为空，此时用默认整图（即不裁剪）
+    const area = completedCrop;
+    if (!area || area.width < 2 || area.height < 2) {
+      // 直接传原图：按整图尺寸裁一份
+      const img = imgRef.current;
+      if (!img) return;
+      setBusy(true);
+      try {
+        const blob = await getCroppedImageBlob(
+          imageSrc,
+          { x: 0, y: 0, width: img.naturalWidth, height: img.naturalHeight },
+          "image/jpeg"
+        );
+        onConfirm(blob, fileName.replace(/\.\w+$/, "") + ".jpg");
+      } catch {
+        alert("处理失败，请重试");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     setBusy(true);
     try {
-      const blob = await getCroppedImageBlob(imageSrc, croppedArea, "image/jpeg");
+      // completedCrop 单位是"显示像素"，需换算回原图像素
+      const img = imgRef.current;
+      if (!img) return;
+      const scaleX = img.naturalWidth / img.width;
+      const scaleY = img.naturalHeight / img.height;
+      const blob = await getCroppedImageBlob(
+        imageSrc,
+        {
+          x: area.x * scaleX,
+          y: area.y * scaleY,
+          width: area.width * scaleX,
+          height: area.height * scaleY,
+        },
+        "image/jpeg"
+      );
       onConfirm(blob, fileName.replace(/\.\w+$/, "") + ".jpg");
     } catch {
       alert("裁剪失败，请重试");
@@ -37,11 +84,6 @@ export default function ImageCropDialog({
       setBusy(false);
     }
   }
-
-  // 打开时聚焦到图片中心区域（裁剪框默认尽量贴合内容，用户可微调）
-  useEffect(() => {
-    // react-easy-crop 默认裁剪框就是整个图片居中，无需额外处理
-  }, []);
 
   return (
     <div
@@ -55,43 +97,28 @@ export default function ImageCropDialog({
         {/* 顶部标题 */}
         <div className="border-b border-slate-100 px-4 py-3">
           <h3 className="text-sm font-semibold text-slate-800">裁剪图片</h3>
-          <p className="mt-0.5 text-xs text-slate-500">拖动和缩放选择要识别的区域</p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            拖动紫色框的边角，框住要保留的内容
+          </p>
         </div>
 
-        {/* 裁剪区域 */}
-        <div className="relative h-[50vh] min-h-[280px] w-full bg-slate-900">
-          <Cropper
-            image={imageSrc}
+        {/* 裁剪区域：图片完整显示，裁剪框可拖动、可拉伸八向手柄 */}
+        <div className="flex max-h-[55vh] items-center justify-center overflow-auto bg-slate-900">
+          <ReactCrop
             crop={crop}
-            zoom={zoom}
-            aspect={undefined}
-            cropShape="rect"
-            showGrid={true}
-            onCropChange={setCrop}
-            onCropComplete={onCropComplete}
-            onZoomChange={setZoom}
-            style={{
-              containerStyle: { width: "100%", height: "100%" },
-              cropAreaStyle: { border: "2px solid #a78bfa" },
-            }}
-          />
-        </div>
-
-        {/* 缩放控制 */}
-        <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3">
-          <span className="text-xs text-slate-500">缩放</span>
-          <input
-            type="range"
-            min={1}
-            max={3}
-            step={0.1}
-            value={zoom}
-            onChange={(e) => setZoom(Number(e.target.value))}
-            className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-slate-200 accent-violet-500"
-          />
-          <span className="w-8 text-right text-xs text-slate-500">
-            {zoom.toFixed(1)}x
-          </span>
+            onChange={(c) => setCrop(c)}
+            onComplete={(c) => setCompletedCrop(c)}
+            className="max-h-[55vh]"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              ref={imgRef}
+              src={imageSrc}
+              alt="待裁剪图片"
+              onLoad={onImageLoad}
+              className="max-h-[55vh] w-auto"
+            />
+          </ReactCrop>
         </div>
 
         {/* 底部按钮 */}
@@ -107,7 +134,7 @@ export default function ImageCropDialog({
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={busy || !croppedArea}
+            disabled={busy}
             className="flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:from-indigo-700 hover:to-violet-600 disabled:opacity-60"
           >
             {busy ? "裁剪中…" : "确认裁剪"}
