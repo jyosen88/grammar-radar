@@ -37,6 +37,43 @@ function formatTime(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 从所有记录中统计知识点错误排行（top N） */
+function buildKpRanking(records: UserRecord[]): { kp: string; count: number }[] {
+  const map = new Map<string, number>();
+  for (const r of records) {
+    // 优先用 knowledge_points 字段
+    let kps: string[] = r.knowledge_points ?? [];
+    // 兜底：从 analysis_result 里提取
+    if (kps.length === 0) {
+      const ar = safeParseAnalysisResult(r.analysis_result);
+      const list: string[] = [];
+      const quiz = ar.quiz as Record<string, unknown> | undefined;
+      if (quiz?.knowledge_point) list.push(quiz.knowledge_point as string);
+      if (Array.isArray(ar.errors)) {
+        for (const e of ar.errors) {
+          const kp = (e as { knowledge_point?: string })?.knowledge_point;
+          if (kp) list.push(kp);
+        }
+      }
+      const result = ar.result as Record<string, unknown> | undefined;
+      if (result && Array.isArray(result.errors)) {
+        for (const e of result.errors) {
+          const kp = (e as { knowledge_point?: string })?.knowledge_point;
+          if (kp) list.push(kp);
+        }
+      }
+      kps = list;
+    }
+    for (const kp of kps) {
+      if (kp) map.set(kp, (map.get(kp) ?? 0) + 1);
+    }
+  }
+  return [...map.entries()]
+    .map(([kp, count]) => ({ kp, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+}
+
 /** 从 analysis_result 里提取错误数量，兼容 analyze / essay 两种存储结构，兼容字符串 */
 function getErrorCount(rawAr: unknown): number {
   const ar = safeParseAnalysisResult(rawAr);
@@ -157,7 +194,56 @@ export default function RecordsPage() {
               </p>
             </div>
           ) : (
-            <ul className="space-y-3">
+            <>
+              {/* 知识点错误排行 */}
+              {buildKpRanking(records).length > 0 && (
+                <div className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+                  <h2 className="text-sm font-semibold text-slate-900">
+                    📊 知识点错误排行（Top 10）
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    按你的历史记录统计，错得最多的知识点
+                  </p>
+                  <ul className="mt-3 space-y-2">
+                    {buildKpRanking(records).map((item, i) => {
+                      const max = buildKpRanking(records)[0]?.count || 1;
+                      const pct = Math.round((item.count / max) * 100);
+                      return (
+                        <li key={item.kp} className="flex items-center gap-2">
+                          <span
+                            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                              i < 3
+                                ? "bg-gradient-to-br from-indigo-500 to-violet-500 text-white"
+                                : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            {i + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-sm text-slate-700">
+                                {item.kp}
+                              </span>
+                              <span className="shrink-0 text-xs font-medium text-violet-600">
+                                {item.count} 次
+                              </span>
+                            </div>
+                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-violet-50">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-400"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {/* 记录列表 */}
+              <ul className="space-y-3">
               {records.map((r) => {
                 const type = safeParseAnalysisResult(r.analysis_result).type as string ?? "analyze";
                 const isEssay = type === "essay";
@@ -246,7 +332,8 @@ export default function RecordsPage() {
                   </li>
                 );
               })}
-            </ul>
+              </ul>
+            </>
           )}
         </main>
       </div>
