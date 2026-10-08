@@ -9,6 +9,7 @@ import { searchReferences, type ReferenceItem } from "@/lib/search";
 import type { User } from "@supabase/supabase-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import ImageCropDialog from "@/components/ImageCropDialog";
 
 /** AI 分析返回的单个语法错误 */
 interface AnalysisError {
@@ -296,6 +297,12 @@ export default function AnalyzeTool({
   const [ocrConfirm, setOcrConfirm] = useState<OcrConfirm | null>(null);
   // 最近一次编辑时间戳：连续输入 700ms 内合并为一个撤销检查点，避免逐字撤销
   const ocrEditAtRef = useRef(0);
+  // 待裁剪的图片（选图后先裁剪，再上传）
+  const [cropSource, setCropSource] = useState<{
+    src: string;
+    name: string;
+    target: "topic" | "essay";
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyHint, setBusyHint] = useState(""); // 上传中 / 识别图片中 / AI 分析中
   const [analysisErrors, setAnalysisErrors] = useState<AnalysisError[] | null>(
@@ -1297,7 +1304,29 @@ export default function AnalyzeTool({
       setAnalysisError("仅支持 JPEG / PNG / WebP 格式的图片");
       return;
     }
+    // 先弹出裁剪界面，用户确认后再走上传流程
+    const src = URL.createObjectURL(file);
+    setCropSource({ src, name: file.name, target });
+  }
 
+  /** 裁剪弹窗：取消 */
+  function handleCropCancel() {
+    if (cropSource) URL.revokeObjectURL(cropSource.src);
+    setCropSource(null);
+  }
+
+  /** 裁剪弹窗：确认后上传裁剪结果并继续识别 */
+  async function handleCropConfirm(blob: Blob, name: string) {
+    if (!cropSource) return;
+    const target = cropSource.target;
+    URL.revokeObjectURL(cropSource.src);
+    setCropSource(null);
+    const file = new File([blob], name, { type: blob.type || "image/jpeg" });
+    await uploadAndRecognize(file, target);
+  }
+
+  /** 上传图片到 Supabase Storage 并调 OCR 识别，结果放入确认面板 */
+  async function uploadAndRecognize(file: File, target: "topic" | "essay") {
     setBusy(true);
     resetResults();
     setSelectedImage(null);
@@ -2862,6 +2891,15 @@ export default function AnalyzeTool({
       </main>
       {/* 吉祥物"小雷达"：页面右下角，答对笑 / 答错思考（key 变化重放动画） */}
       <Mascot mood={mascotMood} key={mascotTick} />
+
+      {cropSource && (
+        <ImageCropDialog
+          imageSrc={cropSource.src}
+          fileName={cropSource.name}
+          onConfirm={handleCropConfirm}
+          onCancel={handleCropCancel}
+        />
+      )}
     </div>
   );
 }
