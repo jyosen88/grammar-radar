@@ -111,11 +111,14 @@ export function SentenceTool() {
     setError(null);
   }
 
-  async function handleAnalyze() {
-    if (!text.trim()) {
+  async function handleAnalyze(overrideText?: string) {
+    const targetText = (overrideText ?? text).trim();
+    if (!targetText) {
       setError("请输入要分析的英文长难句");
       return;
     }
+    // 如果是外部传入的文本（来自题库），同步更新输入框
+    if (overrideText !== undefined) setText(targetText);
     setBusy(true);
     setBusyHint("AI 正在拆解长难句…");
     setError(null);
@@ -124,7 +127,7 @@ export function SentenceTool() {
       const res = await fetch("/api/sentence", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text.trim() }),
+        body: JSON.stringify({ text: targetText }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -137,12 +140,39 @@ export function SentenceTool() {
         return;
       }
       setResult(r);
-      setOriginalSentence(text.trim());
+      setOriginalSentence(targetText);
       setCurStep(0);
       setShowSummary(false);
       requestAnimationFrame(() =>
         topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
       );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "网络错误，请重试");
+    } finally {
+      setBusy(false);
+      setBusyHint("");
+    }
+  }
+
+  /** 从题库随机抽一句，自动填入并立即分析 */
+  async function handlePickFromBank() {
+    setBusy(true);
+    setBusyHint("正在从题库抽取长难句…");
+    setError(null);
+    try {
+      const res = await fetch("/api/sentence-bank");
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data?.error || "题库服务暂时不可用，请稍后再试");
+        return;
+      }
+      const sentence = data?.sentence as string | null;
+      if (!sentence) {
+        setError("题库暂未导入，请先上传长难句");
+        return;
+      }
+      // 拿到句子后立即分析（同步 setText + 传参给 handleAnalyze 避免异步 state 问题）
+      await handleAnalyze(sentence);
     } catch (e) {
       setError(e instanceof Error ? e.message : "网络错误，请重试");
     } finally {
@@ -311,7 +341,28 @@ export function SentenceTool() {
         {/* 输入区 */}
         {!result && (
           <div className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
-            <label className="block text-sm font-semibold text-slate-800">
+            {/* 两个入口按钮 */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handlePickFromBank}
+                className="group inline-flex flex-col items-start gap-1 rounded-xl border border-violet-200 bg-[#fdfbff] p-3 text-left transition hover:border-violet-400 hover:bg-violet-50 disabled:opacity-60"
+              >
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-violet-800">
+                  <span className="text-base">📚</span> 从题库选题
+                </span>
+                <span className="text-xs text-slate-500">随机抽一句，立即开始分析</span>
+              </button>
+              <div className="inline-flex flex-col items-start gap-1 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                  <span className="text-base">✍️</span> 手动输入
+                </span>
+                <span className="text-xs text-slate-500">粘贴或输入长难句，点击下方按钮</span>
+              </div>
+            </div>
+
+            <label className="mt-4 block text-sm font-semibold text-slate-800">
               输入或粘贴一个英文长难句
             </label>
             <textarea
@@ -332,7 +383,7 @@ export function SentenceTool() {
               <button
                 type="button"
                 disabled={busy || !text.trim()}
-                onClick={handleAnalyze}
+                onClick={() => handleAnalyze()}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:from-indigo-700 hover:to-violet-700 active:scale-95 disabled:opacity-60"
               >
                 {busy ? (
@@ -472,6 +523,7 @@ export function SentenceTool() {
             exChecked={exChecked}
             onPickExercise={pickExercise}
             onCheckExercise={checkExercise}
+            onPickBank={handlePickFromBank}
             onRestart={() => {
               setText("");
               resetAll();
@@ -580,6 +632,7 @@ function SentenceSummary({
   exChecked,
   onPickExercise,
   onCheckExercise,
+  onPickBank,
   onRestart,
   saved,
   saveError,
@@ -591,6 +644,7 @@ function SentenceSummary({
   exChecked: boolean[];
   onPickExercise: (exIdx: number, opt: string) => void;
   onCheckExercise: (exIdx: number) => void;
+  onPickBank: () => void;
   onRestart: () => void;
   saved: boolean;
   saveError: string | null;
@@ -691,13 +745,20 @@ function SentenceSummary({
       )}
 
       {/* 操作 */}
-      <div className="flex justify-center">
+      <div className="flex justify-center gap-3">
+        <button
+          type="button"
+          onClick={onPickBank}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-violet-300 bg-white px-5 py-2.5 text-sm font-medium text-violet-700 shadow-sm transition hover:bg-violet-50 active:scale-95"
+        >
+          <span className="text-base">📚</span> 换一句（题库）
+        </button>
         <button
           type="button"
           onClick={onRestart}
           className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:from-indigo-700 hover:to-violet-700 active:scale-95"
         >
-          <RotateCcw className="h-4 w-4" /> 再分析一句
+          <RotateCcw className="h-4 w-4" /> 手动输入新句子
         </button>
       </div>
     </div>
