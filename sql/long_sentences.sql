@@ -16,10 +16,11 @@ create index if not exists long_sentences_created_at_idx
 
 alter table public.long_sentences enable row level security;
 
--- 所有已登录用户均可读题库（题库是公共资源）
-create policy "long_sentences_select_authenticated"
+-- 题库公开可读：/api/sentence-bank 用 anon key 服务端查询，未登录身份也要能读
+drop policy if exists "long_sentences_select_authenticated" on public.long_sentences;
+create policy "long_sentences_select_public"
   on public.long_sentences for select
-  using (auth.role() = 'authenticated');
+  using (true);
 
 -- 只有 service_role 可以写（前端暂无后台管理界面，数据由管理员手动导入）
 -- 默认 deny insert，无需显式 policy
