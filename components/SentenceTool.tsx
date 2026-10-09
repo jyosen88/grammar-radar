@@ -156,6 +156,8 @@ export function SentenceTool() {
 
   /** 从题库随机抽一句，自动填入并立即分析 */
   async function handlePickFromBank() {
+    // 先清空旧结果，给即时视觉反馈（避免总结页/答题页"假死"）
+    resetAll();
     setBusy(true);
     setBusyHint("正在从题库抽取长难句…");
     setError(null);
