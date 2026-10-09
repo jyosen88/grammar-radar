@@ -69,6 +69,113 @@ const LEVEL_BADGE: Record<string, string> = {
   待提高: "bg-red-100 text-red-700",
 };
 
+/** 长难句分析记录详情：展示结构图、总结、答题统计 */
+function SentenceRecordSection({ ar }: { ar: Record<string, unknown> }) {
+  const structureTree = typeof ar.structure_tree === "string" ? ar.structure_tree : "";
+  const summary = typeof ar.summary === "string" ? ar.summary : "";
+  const steps = Array.isArray(ar.steps) ? (ar.steps as Record<string, unknown>[]) : [];
+  const stats = (ar.stats as { total?: number; correct_first_or_second_try?: number; revealed_after_two_wrong?: number }) ?? {};
+  const exercises = Array.isArray(ar.exercises) ? (ar.exercises as Record<string, unknown>[]) : [];
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+  return (
+    <>
+      {/* 答题统计 */}
+      {typeof stats.total === "number" && (
+        <div className="rounded-2xl border border-fuchsia-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">分步答题统计</h2>
+          <div className="mt-3 flex flex-wrap gap-3 text-xs">
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+              共 {stats.total} 题
+            </span>
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">
+              ✅ 答对 {stats.correct_first_or_second_try ?? 0}
+            </span>
+            <span className="rounded-full bg-red-50 px-3 py-1 text-red-700">
+              ❌ 错两次后揭示 {stats.revealed_after_two_wrong ?? 0}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* 句子结构图 */}
+      {structureTree && (
+        <div className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">句子结构图</h2>
+          <pre className="mt-3 overflow-x-auto rounded-lg bg-[#f8f5fe] p-4 text-xs leading-relaxed text-slate-800">
+            {structureTree}
+          </pre>
+        </div>
+      )}
+
+      {/* 一句总结 */}
+      {summary && (
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-indigo-900">一句总结</h2>
+          <p className="mt-2 text-sm leading-relaxed text-indigo-800">{summary}</p>
+        </div>
+      )}
+
+      {/* 分步题目回顾 */}
+      {steps.length > 0 && (
+        <div className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">分步题目回顾（{steps.length} 步）</h2>
+          <div className="mt-3 space-y-3">
+            {steps.map((s, i) => {
+              const questions = Array.isArray(s.questions) ? (s.questions as Record<string, unknown>[]) : [];
+              return (
+                <div key={i} className="rounded-xl border border-slate-100 p-3">
+                  <p className="text-xs font-semibold text-violet-700">
+                    Step {typeof s.step === "number" ? s.step : i + 1} · {str(s.stage)}
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {questions.map((item, j) => (
+                      <div key={j} className="text-xs">
+                        <p className="text-slate-800">
+                          <span className="text-violet-600">Q{j + 1}.</span>{" "}
+                          {str(item.question)}
+                        </p>
+                        <p className="mt-0.5 text-emerald-700">
+                          ✅ {str(item.correct_answer)}
+                        </p>
+                        {item.knowledge_point ? (
+                          <span className="mt-0.5 inline-block rounded bg-violet-50 px-1.5 py-0.5 text-violet-700">
+                            📌 {str(item.knowledge_point)}
+                          </span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 举一反三练习 */}
+      {exercises.length > 0 && (
+        <div className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">举一反三练习（{exercises.length} 道）</h2>
+          <div className="mt-3 space-y-3">
+            {exercises.map((e, i) => (
+              <div key={i} className="border-t border-slate-100 pt-3 first:border-t-0 first:pt-0">
+                <p className="text-xs text-slate-800">
+                  <span className="text-violet-600">{i + 1}.</span> {str(e.question)}
+                </p>
+                <p className="mt-0.5 text-xs text-emerald-700">✅ {str(e.answer)}</p>
+                {e.explanation ? (
+                  <p className="mt-0.5 text-xs text-slate-600">💡 {str(e.explanation)}</p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function RecordDetailPage({ params }: { params: { id: string } }) {
   const [user, setUser] = useState<User | null>(null);
   const [record, setRecord] = useState<UserRecord | null>(null);
@@ -138,6 +245,7 @@ export default function RecordDetailPage({ params }: { params: { id: string } })
   const type = (ar.type as string) ?? "analyze";
   const isEssay = type === "essay";
   const isQuiz = type === "analyze-quiz";
+  const isSentence = type === "sentence";
   const errors: AnalysisError[] = isEssay
     ? ((ar.result as Record<string, unknown>)?.errors as AnalysisError[]) ?? []
     : (ar.errors as AnalysisError[]) ?? [];
@@ -193,10 +301,12 @@ export default function RecordDetailPage({ params }: { params: { id: string } })
                         ? "bg-violet-100 text-violet-700"
                         : isQuiz
                           ? "bg-sky-100 text-sky-700"
-                          : "bg-indigo-100 text-indigo-700"
+                          : isSentence
+                            ? "bg-fuchsia-100 text-fuchsia-700"
+                            : "bg-indigo-100 text-indigo-700"
                     }`}
                   >
-                    {isEssay ? "作文分析" : isQuiz ? "选择题解析" : "单题分析"}
+                    {isEssay ? "作文分析" : isQuiz ? "选择题解析" : isSentence ? "长难句分析" : "单题分析"}
                   </span>
                   <span className="text-xs text-slate-400">
                     {formatTime(record.created_at)}
@@ -366,8 +476,13 @@ export default function RecordDetailPage({ params }: { params: { id: string } })
                 </div>
               )}
 
+              {/* 长难句分析结果：句子结构图 + 一句总结 + 答题统计 */}
+              {isSentence && (
+                <SentenceRecordSection ar={ar} />
+              )}
+
               {/* 语法错误与修改建议 */}
-              {!isQuiz && (
+              {!isQuiz && !isSentence && (
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                   <h2 className="text-sm font-semibold text-slate-900">
                     语法错误与修改建议（{errors.length} 处）

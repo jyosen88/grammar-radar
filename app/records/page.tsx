@@ -248,6 +248,7 @@ export default function RecordsPage() {
                 const type = safeParseAnalysisResult(r.analysis_result).type as string ?? "analyze";
                 const isEssay = type === "essay";
                 const isQuiz = type === "analyze-quiz";
+                const isSentence = type === "sentence";
                 const errCount = getErrorCount(r.analysis_result);
                 const tags = getKnowledgeTags(r.analysis_result, r.knowledge_points);
                 return (
@@ -264,16 +265,22 @@ export default function RecordsPage() {
                               ? "bg-violet-100 text-violet-700"
                               : isQuiz
                                 ? "bg-sky-100 text-sky-700"
-                                : "bg-indigo-100 text-indigo-700"
+                                : isSentence
+                                  ? "bg-fuchsia-100 text-fuchsia-700"
+                                  : "bg-indigo-100 text-indigo-700"
                           }`}
                         >
-                          {isEssay ? "作文分析" : isQuiz ? "选择题解析" : "单题分析"}
+                          {isEssay ? "作文分析" : isQuiz ? "选择题解析" : isSentence ? "长难句分析" : "单题分析"}
                         </span>
                         <span className="text-xs text-slate-400">
                           {formatTime(r.created_at)}
                         </span>
-                        {/* 错误数量 */}
-                        {!isQuiz && (
+                        {/* 错误数量 / 步骤数 */}
+                        {isSentence ? (
+                          <span className="ml-auto rounded-full bg-fuchsia-50 px-2 py-0.5 text-xs font-medium text-fuchsia-600">
+                            分步引导
+                          </span>
+                        ) : !isQuiz ? (
                           <span
                             className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${
                               errCount === 0
@@ -283,8 +290,7 @@ export default function RecordsPage() {
                           >
                             {errCount} 处错误
                           </span>
-                        )}
-                        {isQuiz && (
+                        ) : (
                           <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600">
                             选择题
                           </span>
