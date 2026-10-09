@@ -100,10 +100,9 @@ interface EssayResult {
 
 /** 写作类型分组下拉选项 */
 const ESSAY_SCOPE_GROUPS: { group: string; items: string[] }[] = [
-  { group: "国内考试", items: ["中考", "高考"] },
-  { group: "单元作文", items: ["七上", "七下", "八上", "八下", "九上", "九下"] },
-  { group: "剑桥英语", items: ["KET", "PET", "FCE", "CAE"] },
-  { group: "出国考试", items: ["雅思", "托福"] },
+  { group: "国内考试", items: ["初中", "高中"] },
+  { group: "剑桥英语", items: ["KET", "PET"] },
+  { group: "出国考试", items: ["雅思"] },
 ];
 
 /** 写作类型自定义下拉：文字在按钮内绝对居中（箭头绝对定位在右侧，不占居中空间） */
@@ -616,7 +615,7 @@ export default function AnalyzeTool({
       highlights,
       improvements,
       modelEssay: typeof data?.model_essay === "string" ? data.model_essay : "",
-      scopeLabel: essayScope || "中考（默认）",
+      scopeLabel: essayScope || "初中（默认）",
       errors,
     });
 
