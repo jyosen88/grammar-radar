@@ -101,8 +101,9 @@ interface EssayResult {
 /** 写作类型分组下拉选项 */
 const ESSAY_SCOPE_GROUPS: { group: string; items: string[] }[] = [
   { group: "国内考试", items: ["初中", "高中"] },
-  { group: "剑桥英语", items: ["KET", "PET"] },
-  { group: "出国考试", items: ["雅思"] },
+  // 以下选项暂时隐藏，需要时恢复即可
+  // { group: "剑桥英语", items: ["KET", "PET"] },
+  // { group: "出国考试", items: ["雅思"] },
 ];
 
 /** 写作类型自定义下拉：文字在按钮内绝对居中（箭头绝对定位在右侧，不占居中空间） */
