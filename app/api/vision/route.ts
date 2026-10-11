@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// 阿里云百炼 DashScope（OpenAI 兼容模式），qwen3-vl-flash 视觉模型（flash 档）
+// 阿里云百炼 DashScope（OpenAI 兼容模式），qwen3-vl-plus 视觉模型
+// 注：qwen3-vl-flash 在当前账号的模型清单里不存在（2026-10-11 实测 404 Model not exist），
+// 通过 GET /models 拉取账号可用清单后改用同代 qwen3-vl-plus（实测 200）
 const DASHSCOPE_ENDPOINT =
   "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
-const VL_MODEL = "qwen3-vl-flash";
+const VL_MODEL = "qwen3-vl-plus";
 
 const OCR_PROMPT = `你是一个 OCR 引擎。请提取图片中出现的所有英文文字（可能是手写或印刷的句子、段落、习题）。
 要求：
