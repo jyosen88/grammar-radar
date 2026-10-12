@@ -20,6 +20,15 @@ interface RawExercise {
 }
 
 /**
+ * 去掉 AI 偶尔加在选项/答案开头的 "A. ""B、" 字母前缀（前端会自行渲染字母标签）。
+ * 只剥离"单个字母 + 分隔符"的形式，不影响 "a"（不定冠词）、"/"（零冠词）等正常选项。
+ */
+function stripLetterPrefix(s: string): string {
+  const stripped = s.replace(/^\(?[A-Da-d][.、,)）：:]\s*/, "").trim();
+  return stripped || s;
+}
+
+/**
  * 把 AI 返回的练习题数组逐题清洗：
  * - 题干/答案缺失直接丢弃
  * - 选择题至少 2 个选项且答案必须在选项中，否则降级为填空题
@@ -31,14 +40,15 @@ export function normalizeExercises(raw: unknown, max = 3): Exercise[] {
     .map((ex) => {
       const question =
         typeof ex.question === "string" ? ex.question.trim() : "";
-      const answer = typeof ex.answer === "string" ? ex.answer.trim() : "";
-      if (!question || !answer) return null;
+      const answerRaw = typeof ex.answer === "string" ? ex.answer.trim() : "";
+      if (!question || !answerRaw) return null;
       const isFill = ex.type === "fill";
       const options = Array.isArray(ex.options)
         ? ex.options
             .filter((o): o is string => typeof o === "string" && !!o.trim())
-            .map((o) => o.trim())
+            .map((o) => stripLetterPrefix(o.trim()))
         : [];
+      const answer = stripLetterPrefix(answerRaw);
       const validChoice =
         !isFill && options.length >= 2 && options.includes(answer);
       return {
