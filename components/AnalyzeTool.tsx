@@ -1,4 +1,4 @@
-﻿"use client";
+﻿﻿﻿﻿﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { getSupabase, getStoredSession } from "@/lib/supabase";
@@ -3177,12 +3177,11 @@ const LESSON_MD_COMPONENTS = {
   ),
 };
 
-/** 知识点微讲义（/api/explain）：Markdown 五段式讲义，核心规则与易错点默认展开，其余折叠 */
+/** 知识点微讲义（/api/explain）：Markdown 五段式讲义，默认只展开"核心规则"，其余（易错点/例句/表格/口诀）折叠 */
 function KnowledgeExplainView({ explain }: { explain: KnowledgeExplain }) {
   const sections = splitLessonSections(explain.markdown);
-  // 默认展开"核心规则"和"易错点"，例句/表格/口诀折叠；解析失败时整篇直接展示
-  const defaultOpen = (t: string) =>
-    t.includes("核心规则") || t.includes("易错");
+  // 默认只展开"核心规则"，易错点与坑等其余段落折叠；解析失败时整篇直接展示
+  const defaultOpen = (t: string) => t.includes("核心规则");
   const [open, setOpen] = useState<boolean[]>(() =>
     sections.map((s) => defaultOpen(s.title))
   );
