@@ -5,64 +5,56 @@ import Link from "next/link";
 import { getSupabase, getStoredSession } from "@/lib/supabase";
 
 /**
- * 客户端登录守卫：会话保存在 localStorage（supabase-js persistSession），
- * 服务端 middleware 读不到，因此在客户端校验。
- * - 未登录访问受保护页面 → 跳转 /login（登录成功后进入首页）
- * - 在受保护页面退出登录 → 同样自动跳走
- * - 会话状态确认前不渲染 children，避免闪现受保护内容
+ * 客户端登录守卫：
+ * - 同步读 localStorage 判断登录态（零网络，SSR 阶段用 typeof window 拦截）
+ * - 有缓存会话直接放行；无缓存会话渲染登录入口
+ * - 后台 getSession() 仅做对账，弱网不踢出
  *
- * 弱网 / Safari 兼容处理：
- * 1. 先用 localStorage 缓存会话做零网络判定——有缓存会话立即放行
- * 2. 无缓存会话：尝试 window.location.replace 跳转，同时渲染可点击的登录按钮兜底
- *    （iPad Safari 上 JS 跳转偶发静默失败，用户可手动点按钮进入登录页）
- * 3. 有缓存会话时后台 getSession() 只做对账，弱网超时不踢出
+ * 关键点：登录判定不靠 useEffect 异步 setState，而是
+ * 用 useState(getStoredSession()?.access_token) 做同步初始化，
+ * 避免 hydration 后先渲染 spinner 再闪 children 的时序差，
+ * 彻底解决 iPad Safari 上"检查登录状态"卡死的问题。
  */
 export function AuthGuard({ children }: { children: ReactNode }) {
-  const [allowed, setAllowed] = useState(false);
-  // noSession=true 表示确认未登录，需要显示登录入口（而非无限转圈）
-  const [noSession, setNoSession] = useState(false);
+  // 同步初始化：SSR 时 window 不存在 → localStorage 读不到 → 初始 false；
+  // 客户端首次渲染 → localStorage 有值则初始 true → 直接渲染 children，
+  // 完全不出现 spinner 闪一下再消失的窗口期。
+  const [allowed, setAllowed] = useState<boolean>(
+    typeof window !== "undefined" && !!getStoredSession()?.access_token
+  );
+  const [noSession, setNoSession] = useState<boolean>(
+    typeof window !== "undefined" && !getStoredSession()?.access_token
+  );
 
   useEffect(() => {
     const sb = getSupabase();
     let settled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
-    // 第一步：零网络的本地判定（同步完成）
-    const stored = getStoredSession();
-    if (!stored?.access_token) {
-      // 本地没有任何会话：必定未登录
-      // 尝试自动跳转；同时 setNoSession(true) 渲染可点击的登录按钮作为兜底，
-      // 防止 window.location.replace 在 Safari 上静默失败时卡死
-      setNoSession(true);
-      window.location.replace("/login");
-      return;
-    }
-    // 本地有缓存会话：先放行页面，后台静默对账
-    setAllowed(true);
-
-    const finishNoSession = () => {
-      if (settled) return;
-      settled = true;
-      setAllowed(false);
-      setNoSession(true);
-    };
-
-    // 第二步：后台网络对账，刷新结果明确为无会话才踢回登录；
-    // 弱网超时不打扰用户，保留本地会话继续用
-    sb.auth
-      .getSession()
-      .then(({ data: { session } }) => {
-        if (!session) finishNoSession();
-        else settled = true;
-      })
-      .catch(() => {
-        // 网络错误不踢出，按本地会话放行
+    // 如果 useState 初始值判定有 session，这里做后台对账
+    if (allowed) {
+      const finishNoSession = () => {
+        if (settled) return;
         settled = true;
-      });
+        setAllowed(false);
+        setNoSession(true);
+      };
 
-    refreshTimer = setTimeout(() => {
-      settled = true;
-    }, 3000);
+      sb.auth
+        .getSession()
+        .then(({ data: { session } }) => {
+          if (!session) finishNoSession();
+          else settled = true;
+        })
+        .catch(() => {
+          // 网络错误不踢出
+          settled = true;
+        });
+
+      refreshTimer = setTimeout(() => {
+        settled = true;
+      }, 3000);
+    }
 
     const {
       data: { subscription },
@@ -80,6 +72,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
       if (refreshTimer) clearTimeout(refreshTimer);
       subscription.unsubscribe();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (noSession && !allowed) {
