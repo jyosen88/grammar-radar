@@ -2,22 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { ChevronRight } from "lucide-react";
 import { getSupabase, getStoredSession } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
 import { AuthGuard } from "@/components/AuthGuard";
+import { extractRecordKps, safeParseAnalysisResult } from "@/lib/recordAnalysis";
 import type { User } from "@supabase/supabase-js";
-
-/** analysis_result 可能被存成字符串（列类型 text 而非 jsonb），统一解析 */
-function safeParseAnalysisResult(ar: unknown): Record<string, unknown> {
-  if (typeof ar === "string") {
-    try {
-      return JSON.parse(ar) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }
-  return (ar as Record<string, unknown>) ?? {};
-}
 
 /** user_records 表的一行（列表页只需摘要字段） */
 interface UserRecord {
@@ -37,35 +27,12 @@ function formatTime(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 从所有记录中统计知识点错误排行（top N） */
+/** 从所有记录中统计知识点错误排行（top N）：每条记录同一知识点只计 1 次 */
 function buildKpRanking(records: UserRecord[]): { kp: string; count: number }[] {
   const map = new Map<string, number>();
   for (const r of records) {
-    // 优先用 knowledge_points 字段
-    let kps: string[] = r.knowledge_points ?? [];
-    // 兜底：从 analysis_result 里提取
-    if (kps.length === 0) {
-      const ar = safeParseAnalysisResult(r.analysis_result);
-      const list: string[] = [];
-      const quiz = ar.quiz as Record<string, unknown> | undefined;
-      if (quiz?.knowledge_point) list.push(quiz.knowledge_point as string);
-      if (Array.isArray(ar.errors)) {
-        for (const e of ar.errors) {
-          const kp = (e as { knowledge_point?: string })?.knowledge_point;
-          if (kp) list.push(kp);
-        }
-      }
-      const result = ar.result as Record<string, unknown> | undefined;
-      if (result && Array.isArray(result.errors)) {
-        for (const e of result.errors) {
-          const kp = (e as { knowledge_point?: string })?.knowledge_point;
-          if (kp) list.push(kp);
-        }
-      }
-      kps = list;
-    }
-    for (const kp of kps) {
-      if (kp) map.set(kp, (map.get(kp) ?? 0) + 1);
+    for (const kp of extractRecordKps(r.analysis_result, r.knowledge_points)) {
+      map.set(kp, (map.get(kp) ?? 0) + 1);
     }
   }
   return [...map.entries()]
@@ -85,25 +52,7 @@ function getErrorCount(rawAr: unknown): number {
 
 /** 提取前几个知识点标签用于列表摘要展示 */
 function getKnowledgeTags(rawAr: unknown, kps: string[]): string[] {
-  if (kps.length > 0) return [...new Set(kps)].slice(0, 3);
-  const ar = safeParseAnalysisResult(rawAr);
-  const tags: string[] = [];
-  const quiz = ar?.quiz as Record<string, unknown> | undefined;
-  if (quiz?.knowledge_point) tags.push(quiz.knowledge_point as string);
-  if (Array.isArray(ar?.errors)) {
-    for (const e of ar.errors) {
-      const kp = (e as { knowledge_point?: string })?.knowledge_point;
-      if (kp && tags.length < 3) tags.push(kp);
-    }
-  }
-  const result = ar?.result as Record<string, unknown> | undefined;
-  if (result && Array.isArray(result.errors)) {
-    for (const e of result.errors) {
-      const kp = (e as { knowledge_point?: string })?.knowledge_point;
-      if (kp && tags.length < 3) tags.push(kp);
-    }
-  }
-  return [...new Set(tags)].slice(0, 3);
+  return extractRecordKps(rawAr, kps).slice(0, 3);
 }
 
 export default function RecordsPage() {
@@ -112,6 +61,8 @@ export default function RecordsPage() {
   const [records, setRecords] = useState<UserRecord[]>([]);
   const [error, setError] = useState("");
   const loadedForRef = useRef<string | null>(null);
+  // 知识点错误排行（每次渲染算一次，避免 JSX 里重复计算 3 次）
+  const ranking = buildKpRanking(records);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -196,45 +147,52 @@ export default function RecordsPage() {
           ) : (
             <>
               {/* 知识点错误排行 */}
-              {buildKpRanking(records).length > 0 && (
+              {ranking.length > 0 && (
                 <div className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
                   <h2 className="text-sm font-semibold text-slate-900">
                     📊 知识点错误排行（Top 10）
                   </h2>
                   <p className="mt-0.5 text-xs text-slate-400">
-                    按你的历史记录统计，错得最多的知识点
+                    按你的历史记录统计，错得最多的知识点 · 点击查看具体错题
                   </p>
-                  <ul className="mt-3 space-y-2">
-                    {buildKpRanking(records).map((item, i) => {
-                      const max = buildKpRanking(records)[0]?.count || 1;
+                  <ul className="mt-3 space-y-1">
+                    {ranking.map((item, i) => {
+                      const max = ranking[0]?.count || 1;
                       const pct = Math.round((item.count / max) * 100);
                       return (
-                        <li key={item.kp} className="flex items-center gap-2">
-                          <span
-                            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                              i < 3
-                                ? "bg-gradient-to-br from-indigo-500 to-violet-500 text-white"
-                                : "bg-slate-100 text-slate-500"
-                            }`}
+                        <li key={item.kp}>
+                          <Link
+                            href={`/records/by-kp?kp=${encodeURIComponent(item.kp)}`}
+                            className="group flex items-center gap-2 rounded-xl px-2 py-1.5 transition hover:bg-violet-50"
+                            title={`查看「${item.kp}」的具体错题`}
                           >
-                            {i + 1}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="truncate text-sm text-slate-700">
-                                {item.kp}
-                              </span>
-                              <span className="shrink-0 text-xs font-medium text-violet-600">
-                                {item.count} 次
-                              </span>
+                            <span
+                              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                                i < 3
+                                  ? "bg-gradient-to-br from-indigo-500 to-violet-500 text-white"
+                                  : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              {i + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate text-sm text-slate-700 group-hover:text-violet-700">
+                                  {item.kp}
+                                </span>
+                                <span className="shrink-0 text-xs font-medium text-violet-600">
+                                  {item.count} 次
+                                  <ChevronRight className="ml-1 inline h-3.5 w-3.5 opacity-0 transition group-hover:opacity-100" />
+                                </span>
+                              </div>
+                              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-violet-50">
+                                <div
+                                  className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-400"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
                             </div>
-                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-violet-50">
-                              <div
-                                className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-400"
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                          </div>
+                          </Link>
                         </li>
                       );
                     })}
