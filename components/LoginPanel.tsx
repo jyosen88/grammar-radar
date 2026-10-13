@@ -13,8 +13,8 @@ export function LoginPanel() {
 
   useEffect(() => {
     // 同步读取本地缓存会话（零网络）：已登录直接进首页；
-    // 不使用 getSession()，避免手机弱网刷新 token 时登录页一直“加载中”
-    if (getStoredSession()?.access_token) router.replace("/");
+    // 用 window.location 做硬跳转，避免 iPad Safari 上 router.replace 静默失败
+    if (getStoredSession()?.access_token) window.location.replace("/");
     else setChecked(true);
   }, [router]);
 
@@ -37,7 +37,7 @@ export function LoginPanel() {
         </p>
 
         <div className="mt-6">
-          <AuthForm onSuccess={() => router.replace("/")} />
+          <AuthForm onSuccess={() => window.location.replace("/")} />
         </div>
 
         <div className="mt-5 text-center">

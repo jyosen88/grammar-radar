@@ -23,12 +23,15 @@ export function AuthGuard({ children }: { children: ReactNode }) {
     const sb = getSupabase();
     let settled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
 
     // 第一步：零网络的本地判定（同步完成）
     const stored = getStoredSession();
     if (!stored?.access_token) {
-      // 本地没有任何会话：必定未登录，直接跳，绝不等待网络
-      router.replace("/login");
+      // 本地没有任何会话：必定未登录，直接跳，绝不等待网络。
+      // 用 window.location.replace 做硬跳转——iPad Safari 上 Next.js 客户端
+      // router.replace 偶发静默失败，会卡在"正在检查登录状态"。
+      window.location.replace("/login");
       return;
     }
     // 本地有缓存会话（即使 access_token 已过期，也可能靠 refresh_token 续期）：
@@ -39,7 +42,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
       if (settled) return;
       settled = true;
       setAllowed(false);
-      router.replace("/login");
+      window.location.replace("/login");
     };
 
     // 第二步：后台网络对账，刷新结果明确为无会话才踢回登录；
@@ -60,6 +63,14 @@ export function AuthGuard({ children }: { children: ReactNode }) {
       settled = true;
     }, 3000);
 
+    // 兜底兜底：如果 2 秒后仍在 spinner（allowed 未变 true，也未触发上面的跳转），
+    // 强制硬跳登录页——防止 Safari 上极端情况卡死
+    fallbackTimer = setTimeout(() => {
+      if (!settled) {
+        window.location.href = "/login";
+      }
+    }, 2000);
+
     const {
       data: { subscription },
     } = sb.auth.onAuthStateChange((event, session) => {
@@ -67,12 +78,13 @@ export function AuthGuard({ children }: { children: ReactNode }) {
         setAllowed(true);
       } else if (event === "SIGNED_OUT") {
         setAllowed(false);
-        router.replace("/login");
+        window.location.replace("/login");
       }
     });
 
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
+      if (fallbackTimer) clearTimeout(fallbackTimer);
       subscription.unsubscribe();
     };
     // router 实例稳定
