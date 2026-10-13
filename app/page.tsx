@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { FilePenLine, SearchCheck, Network } from "lucide-react";
-import { SiteNav } from "@/components/SiteNav";
+import { AuthArea } from "@/components/AuthArea";
 
 /** 首页三个功能入口（稍后可整体替换为 public/ 下的本地图标图片） */
 const ENTRIES = [
@@ -11,10 +11,8 @@ const ENTRIES = [
 
 export default function HomePage() {
   return (
-    <>
-      <SiteNav />
-      <main
-      className="flex min-h-screen w-full flex-col items-center justify-center px-4 py-12"
+    <main
+      className="relative flex min-h-screen w-full flex-col items-center justify-center px-4 py-12"
       style={{
         // 整体背景：清爽的浅紫蓝（左淡品紫 → 中浅紫 → 右浅蓝紫），桌面端不显脏；
         // 顶层纵向在卡片区（约 70% 以下）渐到近白，保证白卡片清晰
@@ -23,6 +21,11 @@ export default function HomePage() {
         backgroundRepeat: "no-repeat",
       }}
     >
+      {/* 右上角登录/注册按钮：放大一倍（text-xs→text-sm，padding 翻倍） */}
+      <div className="absolute right-4 top-4 z-10 [&_button]:!rounded-2xl [&_button]:!border-2 [&_button]:!px-5 [&_button]:!py-2 [&_button]:!text-sm [&_button]:!font-semibold sm:right-6 sm:top-6">
+        <AuthArea />
+      </div>
+
       <div className="mx-auto flex w-full max-w-md flex-col items-center">
         {/* 品牌区：Logo + 主副标题（Logo 图片位于 public/logo.png，直接展示原图） */}
         <div className="flex w-full flex-col items-center gap-4">
@@ -109,6 +112,5 @@ export default function HomePage() {
         </div>
       </div>
     </main>
-    </>
   );
 }
