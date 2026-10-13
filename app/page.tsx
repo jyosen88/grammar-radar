@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { FilePenLine, SearchCheck, Network } from "lucide-react";
+import { SiteNav } from "@/components/SiteNav";
 
 /** 首页三个功能入口（稍后可整体替换为 public/ 下的本地图标图片） */
 const ENTRIES = [
@@ -10,7 +11,9 @@ const ENTRIES = [
 
 export default function HomePage() {
   return (
-    <main
+    <>
+      <SiteNav />
+      <main
       className="flex min-h-screen w-full flex-col items-center justify-center px-4 py-12"
       style={{
         // 整体背景：清爽的浅紫蓝（左淡品紫 → 中浅紫 → 右浅蓝紫），桌面端不显脏；
@@ -106,5 +109,6 @@ export default function HomePage() {
         </div>
       </div>
     </main>
+    </>
   );
 }
