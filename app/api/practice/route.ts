@@ -187,7 +187,16 @@ ${
       exercises?: unknown;
     };
 
-    const exercises: Exercise[] = normalizeExercises(parsed?.exercises, count);
+    const exercises: Exercise[] = normalizeExercises(parsed?.exercises, count).map(
+      (ex) => ({
+        ...ex,
+        // 解析开头的「本题考规则X：」只是出题纪律标记，展示给学生前剥掉
+        explanation: ex.explanation.replace(
+          /^本题考(查)?规则[一二三四五六七八九十\d]+[：:]\s*/,
+          ""
+        ),
+      })
+    );
     if (exercises.length === 0) {
       return NextResponse.json(
         { error: "AI 没有生成有效的练习题，请重试" },
