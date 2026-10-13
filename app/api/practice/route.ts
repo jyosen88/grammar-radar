@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeExercises, parseLooseJson, type Exercise } from "@/lib/exercise";
 
-const buildSystemPrompt = (count: number) => `你是一名中学英语老师。学生正在学习一道英语题，请围绕这道题考查的"细化知识点"，为学生生成 ${count} 道变式练习题，帮助他通过练习掌握。
+const buildSystemPrompt = (count: number, coverageBlock: string) => `你是一名中学英语老师。学生正在学习一道英语题，请围绕这道题考查的"细化知识点"，为学生生成 ${count} 道变式练习题，帮助他通过练习掌握。
 
 出题要求：
-1. 题目必须严格考同一个细化知识点（例如知识点是"主谓一致 - 就近一致"，就不要出成普通主谓一致或时态题），但句子、场景要换，不能照抄原题
+1. ${
+    coverageBlock
+      ? `每道单题本身只考一条规则，考点必须明确单一；但整组练习必须严格基于【知识点微讲义】里的规则出题，并按第 1.5 条「考点轮换分配」覆盖讲义里的多条核心规则，绝不能整批只反复考同一条规则${coverageBlock}`
+      : `题目必须严格考同一个细化知识点（例如知识点是"主谓一致 - 就近一致"，就不要出成普通主谓一致或时态题），但句子、场景要换，不能照抄原题`
+  }
 2. 难度以中国初中英语为标准，句子贴近中学生生活
 3. 题型只允许单项选择题（四选一）：每道题必须恰好 4 个选项（A/B/C/D），绝对不要出填空题、判断题或多选题，每道题只考这一个知识点；options 数组里只放选项内容本身（如 "is"），绝不要带 "A. ""B、" 这类字母前缀，前端会自动加字母标签
 4. 每题必须附带"正确答案 + 一句话核心考点"：解析为一句中文，点明核心考点并指向正确答案本身，讲清为什么是这个答案
@@ -78,14 +82,45 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const excludeList = (Array.isArray(exclude) ? exclude : [])
+  const allExclude = (Array.isArray(exclude) ? exclude : [])
     .filter((q): q is string => typeof q === "string" && !!q.trim())
-    .map((q) => q.trim())
-    .slice(0, 30);
+    .map((q) => q.trim());
+  // 全局题号偏移：exclude 是该知识点已生成的全部题目，长度即下一批的起始题号-1
+  const generatedCount = allExclude.length;
+  const excludeList = allExclude.slice(0, 30);
+
+  // 有微讲义时：按全局题号把题目分配到讲义的各条核心规则，避免连续十几题全考第一条规则。
+  // 区段映射在服务端逐题算好直接写进 Prompt（第 1-4 题规则一 / 5-8 规则二 / 9-12 规则三 / 13-15 轮流规则四及之后），
+  // 不让 AI 自行判断，保证分配严格落地
+  const perQuestionPlan = Array.from({ length: count }, (_, i) => {
+    const g = generatedCount + i + 1;
+    if (g <= 4) return `- 第 ${g} 题 → 考规则一`;
+    if (g <= 8) return `- 第 ${g} 题 → 考规则二`;
+    if (g <= 12) return `- 第 ${g} 题 → 考规则三`;
+    if (g <= 15)
+      return `- 第 ${g} 题 → 只能考规则四或编号更大的规则（规则四、规则五……），绝不允许再考规则一、规则二、规则三，且尽量与前一题不同`;
+    return `- 第 ${g} 题 → 在讲义全部规则间轮换，不得与之前连续 4 道题考同一规则`;
+  }).join("\n");
+
+  const coverageBlock = lesson.trim()
+    ? `
+1.5 考点轮换分配（有微讲义时必须逐题严格执行，违反即为废题）：
+第一步：从微讲义中提炼全部核心规则，按讲义中的出现顺序编号为 规则一、规则二、规则三……（例：虚拟语气讲义 → 规则一"与现在事实相反"、规则二"与过去事实相反"、规则三"与将来事实相反"、规则四"be 动词用 were"、规则五"主句情态动词选择"；规则一通常就是学生刚犯错的那个知识点）。
+第二步：按下面的对照表给每道题分配考点，逐题遵守，绝不允许整批只考同一条规则：
+${perQuestionPlan}
+第三步：每道题的解析必须以「本题考规则X：」开头（X 为一二三…中文编号），规则名必须与讲义中该规则的表述一致，并在解析里讲清该规则的用法。
+语义一致性铁律：对照表里的每个规则编号都严格对应讲义里编号相同的那条规则——题目的语法结构必须真正体现该规则的内容，绝不允许挂着规则二的编号却考规则一的语法（反例：虚拟语气讲义中规则二是"与过去事实相反"（if 从句 had + 过去分词，主句 would have + 过去分词），那么考规则二的题就必须出现 had done / would have done 结构；像 "If she had enough money, she would buy..." 这种 if 从句用一般过去式的句子属于规则一"与现在事实相反"，绝不能冒充规则二）。
+注意：如果讲义核心规则不足 4 条，把题目尽量均匀分配到各条规则上轮换，同一条规则不允许连续考超过 4 道题。`
+    : "";
 
   // 学生刚看完的微讲义：有则作为出题的唯一范围依据，优先级最高
   const lessonBlock = lesson.trim()
     ? `【知识点微讲义（学生刚学过，题目必须严格基于这份讲义覆盖的规则和用法，不得超出讲义范围）】\n${lesson.slice(0, 3000)}\n`
+    : "";
+
+  // 有微讲义时，把逐题分配表也写进 user 消息（比 system prompt 对模型的约束力更强）
+  const assignmentLine = lesson.trim()
+    ? `【本批考点分配（最高优先级，必须逐题严格执行，即使本题干指向规则一也要按此分配）】\n${perQuestionPlan}\n`
     : "";
 
   let userContent: string;
@@ -99,7 +134,7 @@ ${
         .map((q, i) => `${i + 1}. ${q.slice(0, 300)}`)
         .join("\n")}\n`
     : ""
-}
+}${assignmentLine}
 请恰好生成 ${count} 道变式练习题。`;
   } else {
     // 传统错误模式：基于具体错误片段出题
@@ -113,7 +148,7 @@ ${
         .map((q, i) => `${i + 1}. ${q.slice(0, 300)}`)
         .join("\n")}\n`
     : ""
-}
+}${assignmentLine}
 请恰好生成 ${count} 道变式练习题。`;
   }
 
@@ -127,7 +162,7 @@ ${
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: [
-          { role: "system", content: buildSystemPrompt(count) },
+          { role: "system", content: buildSystemPrompt(count, coverageBlock) },
           { role: "user", content: userContent },
         ],
         response_format: { type: "json_object" },
