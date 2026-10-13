@@ -64,13 +64,55 @@ export function normalizeExercises(raw: unknown, max = 3): Exercise[] {
     .slice(0, max);
 }
 
+/**
+ * 修复 AI 输出 JSON 中字符串内部未转义的控制字符
+ * （模型偶尔在字符串里直接输出换行/制表符，JSON.parse 会报
+ * "Bad control character in string literal in JSON"）
+ * 只处理字符串字面量内部的控制字符，字符串外的换行缩进是合法空白，保持原样
+ */
+function sanitizeControlChars(json: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
+    }
+    // 字符串内部：转义序列原样保留（\" \\ \n 等）
+    if (ch === "\\") {
+      out += ch + (json[i + 1] ?? "");
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inString = false;
+      out += ch;
+      continue;
+    }
+    const code = ch.charCodeAt(0);
+    if (code === 10) out += "\\n";
+    else if (code === 13) out += "\\r";
+    else if (code === 9) out += "\\t";
+    else if (code < 32) out += "\\u" + code.toString(16).padStart(4, "0");
+    else out += ch;
+  }
+  return out;
+}
+
 /** 尝试从 AI 文本中提取 JSON（兼容模型偶尔在 JSON 外加说明文字） */
 export function parseLooseJson(content: string): unknown {
   try {
     return JSON.parse(content);
   } catch {
-    const m = content.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error("AI 返回内容无法解析为 JSON");
-    return JSON.parse(m[0]);
+    // 先尝试修复字符串内部的控制字符再解析
+    try {
+      return JSON.parse(sanitizeControlChars(content));
+    } catch {
+      const m = content.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error("AI 返回内容无法解析为 JSON");
+      return JSON.parse(sanitizeControlChars(m[0]));
+    }
   }
 }
