@@ -479,6 +479,17 @@ export function SentenceTool() {
                       {step.step}
                     </span>
                     <h2 className="text-base font-semibold text-slate-900">{step.stage}</h2>
+                    {step.questions.length > 1 && (() => {
+                      const done = step.questions.filter((_, qIdx) => {
+                        const st = qStates[keyOf(curStep, qIdx)]?.status;
+                        return st === "correct" || st === "revealed";
+                      }).length;
+                      return (
+                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs text-violet-700">
+                          已完成 {done}/{step.questions.length} 题
+                        </span>
+                      );
+                    })()}
                   </div>
                   {step.questions.map((q, qIdx) => {
                     const k = keyOf(curStep, qIdx);
@@ -498,19 +509,11 @@ export function SentenceTool() {
 
             {/* 下一步按钮 */}
             {stepCompleted(curStep) && (
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={goNextStep}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:from-indigo-700 hover:to-violet-700 active:scale-95"
-                >
-                  {curStep < result.steps.length - 1 ? (
-                    <>下一步 <ChevronRight className="h-4 w-4" /></>
-                  ) : (
-                    <>查看完整解析 <TreePine className="h-4 w-4" /></>
-                  )}
-                </button>
-              </div>
+              <NextStepButton
+                curStep={curStep}
+                totalSteps={result.steps.length}
+                onNext={goNextStep}
+              />
             )}
           </div>
         )}
@@ -621,6 +624,39 @@ function SentenceQuestionCard({
           <p className="text-slate-700">💡 {q.hint || "再仔细看看句子结构。"}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============ 下一步按钮（出现时自动滚入视口） ============
+function NextStepButton({
+  curStep,
+  totalSteps,
+  onNext,
+}: {
+  curStep: number;
+  totalSteps: number;
+  onNext: () => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    // 按钮刚出现时滚入视口，只滚一次避免干扰
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+  return (
+    <div className="flex justify-end pt-1">
+      <button
+        ref={ref}
+        type="button"
+        onClick={onNext}
+        className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:from-indigo-700 hover:to-violet-700 active:scale-95"
+      >
+        {curStep < totalSteps - 1 ? (
+          <>下一步 <ChevronRight className="h-4 w-4" /></>
+        ) : (
+          <>查看完整解析 <TreePine className="h-4 w-4" /></>
+        )}
+      </button>
     </div>
   );
 }
