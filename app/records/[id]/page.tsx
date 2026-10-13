@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getSupabase, getStoredSession } from "@/lib/supabase";
 import { SiteNav } from "@/components/SiteNav";
@@ -176,7 +176,9 @@ function SentenceRecordSection({ ar }: { ar: Record<string, unknown> }) {
   );
 }
 
-export default function RecordDetailPage({ params }: { params: { id: string } }) {
+export default function RecordDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  // Next.js 15+ 中 client 页面的 params 是 Promise，必须用 use() 解包
+  const { id: recordId } = use(params);
   const [user, setUser] = useState<User | null>(null);
   const [record, setRecord] = useState<UserRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -194,7 +196,7 @@ export default function RecordDetailPage({ params }: { params: { id: string } })
       const { data, error: qErr } = await sb
         .from("user_records")
         .select("*")
-        .eq("id", params.id)
+        .eq("id", recordId)
         .eq("user_id", uid) // RLS 已保护，双保险
         .maybeSingle();
       if (qErr) {
@@ -238,7 +240,7 @@ export default function RecordDetailPage({ params }: { params: { id: string } })
     });
     return () => subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.id]);
+  }, [recordId]);
 
   // ── 提取分析数据（兼容字符串存储） ──
   const ar = safeParseAnalysisResult(record?.analysis_result);
