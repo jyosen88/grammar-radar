@@ -30,7 +30,7 @@ const buildSystemPrompt = (count: number, coverageBlock: string) => `你是一�
 
 严格按照以下 JSON 格式返回，不要输出任何其他内容：
 {
-  "knowledge_point": "细化知识点名称（与传入的一致或更精确）",
+  "knowledge_point": "细化知识点名称：必须逐字返回传入的知识点，禁止改写、增删词语或加括号补充说明",
   "exercises": [
     {
       "type": "choice",
@@ -204,12 +204,15 @@ ${
       );
     }
 
+    // 知识点优先原样返回传入的标签（AI 有时会改写成冗余变体，如"条件状语句（与现在事实相反）"），
+    // 只有传入为空时才用 AI 提炼的
+    const aiKp =
+      typeof parsed?.knowledge_point === "string" &&
+      parsed.knowledge_point.trim()
+        ? parsed.knowledge_point.trim()
+        : "";
     return NextResponse.json({
-      knowledge_point:
-        typeof parsed?.knowledge_point === "string" &&
-        parsed.knowledge_point.trim()
-          ? parsed.knowledge_point.trim()
-          : knowledgePoint,
+      knowledge_point: knowledgePoint.trim() || aiKp,
       exercises,
     });
   } catch (e) {
