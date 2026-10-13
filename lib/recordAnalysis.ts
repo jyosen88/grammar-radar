@@ -18,13 +18,56 @@ export function safeParseAnalysisResult(ar: unknown): Record<string, unknown> {
   return (ar as Record<string, unknown>) ?? {};
 }
 
+/** 长难句分步题的答题状态（qStates 的值） */
+interface SentenceQState {
+  status?: string;
+  attempts?: number;
+}
+
+/** 从 analysis_result 里取 qStates（缺失或为空时返回 null） */
+function sentenceQStates(ar: Record<string, unknown>): Record<string, SentenceQState> | null {
+  const qs = ar.qStates;
+  if (qs && typeof qs === "object" && Object.keys(qs as object).length > 0) {
+    return qs as Record<string, SentenceQState>;
+  }
+  return null;
+}
+
+/** 判断长难句分步题是否真正答错（错过至少一次：错 1 次后答对，或错两次揭示答案；首次答对不算错题） */
+function isSentenceQWrong(st: SentenceQState | undefined): boolean {
+  if (!st || typeof st.status !== "string") return false;
+  if (st.status === "revealed") return true;
+  if (st.status === "wrong1" || st.status === "wrong2") return true;
+  // 首次就答对 attempts=1；错 1 次后答对 attempts=2
+  if (st.status === "correct") return (typeof st.attempts === "number" ? st.attempts : 1) >= 2;
+  return false;
+}
+
 /** 提取一条记录涉及的所有知识点（去重）：优先 knowledge_points 字段，兜底从 analysis_result 里提取 */
 export function extractRecordKps(
   rawAr: unknown,
   kps: string[] | null | undefined
 ): string[] {
-  if (kps && kps.length > 0) return [...new Set(kps)];
   const ar = safeParseAnalysisResult(rawAr);
+  // 长难句记录：只统计真正答错的题目所涉及的知识点（首次答对的不算错题）；
+  // qStates 缺失的旧记录没有答题状态，走下方通用兜底
+  if (ar.type === "sentence" && Array.isArray(ar.steps)) {
+    const qStates = sentenceQStates(ar);
+    if (qStates) {
+      const list: string[] = [];
+      (ar.steps as Record<string, unknown>[]).forEach((s, sIdx) => {
+        if (!Array.isArray(s?.questions)) return;
+        (s.questions as Record<string, unknown>[]).forEach((q, qIdx) => {
+          const kp = q?.knowledge_point;
+          if (typeof kp !== "string" || !kp) return;
+          if (!isSentenceQWrong(qStates[`${sIdx}-${qIdx}`])) return;
+          list.push(kp);
+        });
+      });
+      return [...new Set(list)];
+    }
+  }
+  if (kps && kps.length > 0) return [...new Set(kps)];
   const list: string[] = [];
   const quiz = ar.quiz as Record<string, unknown> | undefined;
   if (quiz && typeof quiz.knowledge_point === "string" && quiz.knowledge_point) {
@@ -76,20 +119,21 @@ export function getKpErrorItems(rawAr: unknown, kp: string): KpErrorItem[] {
     items.push({ kind: "quiz", wrong: "", right: ansText ? `${letter}. ${ansText}` : letter });
   }
 
-  // 长难句记录：分步题目中该知识点的题目 + 正确答案
+  // 长难句记录：只列出真正答错的分步题（首次答对的不算错题）
   if (Array.isArray(ar.steps)) {
-    for (const s of ar.steps as Record<string, unknown>[]) {
-      if (!Array.isArray(s?.questions)) continue;
-      for (const q of s.questions as Record<string, unknown>[]) {
-        if (q?.knowledge_point === kp && typeof q.question === "string") {
-          items.push({
-            kind: "question",
-            wrong: q.question,
-            right: typeof q.correct_answer === "string" ? q.correct_answer : "",
-          });
-        }
-      }
-    }
+    const qStates = sentenceQStates(ar);
+    (ar.steps as Record<string, unknown>[]).forEach((s, sIdx) => {
+      if (!Array.isArray(s?.questions)) return;
+      (s.questions as Record<string, unknown>[]).forEach((q, qIdx) => {
+        if (q?.knowledge_point !== kp || typeof q.question !== "string") return;
+        if (qStates && !isSentenceQWrong(qStates[`${sIdx}-${qIdx}`])) return;
+        items.push({
+          kind: "question",
+          wrong: q.question,
+          right: typeof q.correct_answer === "string" ? q.correct_answer : "",
+        });
+      });
+    });
   }
   return items;
 }
